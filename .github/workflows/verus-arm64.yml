@@ -120,6 +120,17 @@ jobs:
             tests/verus_fullchecktest.cpp clplain.o hk.o hkp.o -o fullchecktest
           ./fullchecktest 200000 | tee -a difftest.txt
           grep -q 'fullchecktest.*PASS' difftest.txt
+          # against the reference: known-answer vectors (hellcatz/verushash-node verushash_v2_3_upgrade, whose 2.2
+          # matches VerusCoin), and the single-nonce clhash vs the reference round loop (result and mutated key;
+          # small key masks force the prand == prandex corner)
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -I. -Iverus \
+            tests/verus_kattest.cpp clplain.o hk.o hkp.o -o kattest
+          ./kattest | tee -a difftest.txt
+          grep -q 'kattest.*PASS' difftest.txt
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -I. -Iverus \
+            tests/verus_reftest.cpp clplain.o hk.o hkp.o -o reftest
+          ./reftest 200000 | tee -a difftest.txt
+          grep -q 'reftest.*PASS' difftest.txt
           for v in baseline pristine x2percore x2percorep; do echo "banner $v: $(./out/ccminer-$v --version 2>&1 | grep -o 'Verus variant: .*' | head -1)" | tee -a difftest.txt; done
           ! grep -q FAIL difftest.txt
           [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 104 ]

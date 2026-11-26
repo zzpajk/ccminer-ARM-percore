@@ -5,7 +5,8 @@
 # the newest binary built by verus-ref-bench.sh. Samples every 10 s: the foreground/top-app cpusets, the CPUs
 # the miner is allowed, the CPU each miner thread last ran on, the screen state (via root, if available).
 # Changes are logged with timestamps; a status line every status-seconds (default 300) with the hashrate,
-# each CPU's current clock (MHz), the clock caps below the hardware maximum, and the CPU temperatures.
+# each CPU's current clock (MHz), the clock caps below the hardware maximum, the CPU temperatures, the hottest
+# CPU zone and the active cooling devices; at the end a "thermal:" summary line (kH/s per degree, throttled share).
 # "widen" (default) first sets the foreground cpuset to all CPUs ONCE (root) and restores it at the end.
 # MODE may be "widen,cap1794" / "nowiden,cap1794": also cap the fast cores' clock (root; restored at the end).
 # Extra miner options (e.g. --cpu-priority 1) are passed through. Refuses to run while another ccminer runs.
@@ -78,11 +79,17 @@ caps() { local o="" c mx sm; for c in $C/cpu[0-9]*; do mx=$(cat $c/cpufreq/cpuin
 temps() { local o="" z t v n=0; for z in /sys/class/thermal/thermal_zone*; do t=$(cat $z/type 2>/dev/null); v=$(cat $z/temp 2>/dev/null)
 	case "$t" in *[Cc][Pp][Uu]*|*[Bb][Ii][Gg]*|*[Ll][Ii][Tt][Tt][Ll][Ee]*|*[Mm][Ii][Dd]*|*AP*|*ap_*|*soc*|*SOC*) ;; *) continue;; esac
 	[ -n "$v" ] || continue; [ "$v" -gt 1000 ] && v=$((v/1000)); o="$o $t=${v}C"; n=$((n+1)); [ $n -ge 6 ] && break; done; echo "${o# }"; }
+# hottest CPU-type thermal zone in whole degrees C (empty if none readable)
+tmax() { temps | tr ' ' '\n' | sed -n 's/.*=\([0-9-]*\)C$/\1/p' | sort -n | tail -1; }
+# cooling devices that are active (cur_state > 0), as "type:cur/max"; thermal throttling shows up here and in caps
+cooling() { local o="" d c; for d in /sys/class/thermal/cooling_device*; do c=$(cat $d/cur_state 2>/dev/null); [ -n "$c" ] && [ "$c" -gt 0 ] 2>/dev/null || continue
+	o="$o $(cat $d/type 2>/dev/null):$c/$(cat $d/max_state 2>/dev/null)"; done; echo "${o# }"; }
 screen() { [ -n "$SU" ] || { echo "?"; return; }
 	timeout 10 "$SU" -c "dumpsys power" </dev/null 2>/dev/null | grep -m1 -oE 'mWakefulness=[A-Za-z]+' | cut -d= -f2; }
 ORIG=$(cat "$F" 2>/dev/null)
 echo "$(ts) binary $BIN; extra options: ${*:-none}"
-echo "$(ts) idle: MHz $(freqs) | caps $(c=$(caps); echo "${c:-none}") | $(temps)"
+T_IDLE=$(tmax)
+echo "$(ts) idle: MHz $(freqs) | caps $(c=$(caps); echo "${c:-none}") | $(temps) | max ${T_IDLE:-?}C | cooling $(c=$(cooling); echo "${c:-none}")"
 echo "$(ts) cpus present $ALL; foreground=$ORIG top-app=$(cat /dev/cpuset/top-app/cpus 2>/dev/null) background=$(cat /dev/cpuset/background/cpus 2>/dev/null); su=${SU:-none}; screen=$(screen)"
 if [ "$MODE" = widen ]; then
 	[ -n "$SU" ] || { echo "widen needs root (Android su)"; exit 1; }
@@ -133,7 +140,7 @@ if [ "$STUNE" = 1 ]; then
 fi
 sleep 5
 echo "$(ts) miner pid $MP, $NCPU threads; sampling every 10 s for $MIN min, status every $STS s"
-t_start=$(date +%s); sum=0; cnt=0
+t_start=$(date +%s); sum=0; cnt=0; tsum=0; tcnt=0; tpeak=0; thr=0; stn=0
 end=$(( $(date +%s) + MIN * 60 )); last=""; changes=0; narrow=0; samples=0; nextst=$(( $(date +%s) + STS ))
 while [ "$(date +%s)" -lt "$end" ] && kill -0 "$MP" 2>/dev/null; do
 	fg=$(cat "$F" 2>/dev/null); al=$(grep -m1 Cpus_allowed_list /proc/$MP/status 2>/dev/null | awk '{print $2}')
@@ -153,13 +160,23 @@ while [ "$(date +%s)" -lt "$end" ] && kill -0 "$MP" 2>/dev/null; do
 		[ -n "$POOL" ] && hr="$hr, $(grep -oE 'accepted [0-9]+/[0-9]+, not sent [0-9]+' "$LOG" | tail -1)"
 		if [ $(( $(date +%s) - t_start )) -ge 300 ] && [ -n "$hr" ]; then
 			sum=$(awk -v a="$sum" -v b="$(echo "$hr" | awk '{print $2}')" 'BEGIN {print a + b}'); cnt=$((cnt + 1)); fi
-		echo "$(ts) status: ${hr:-no total yet} | MHz $(freqs) | caps $(caps | sed 's/^$/none/') | $(temps) | $cur | threads on $on | cpu time per thread since the last status (cpu:percent) $(tload)"
+		tm=$(tmax); cl=$(cooling); cp=$(caps)
+		if [ $(( $(date +%s) - t_start )) -ge 300 ]; then
+			stn=$((stn + 1)); { [ -n "$cl" ] || [ -n "$cp" ]; } && thr=$((thr + 1))
+			[ -n "$tm" ] && { tsum=$((tsum + tm)); tcnt=$((tcnt + 1)); [ "$tm" -gt "$tpeak" ] && tpeak=$tm; }
+		fi
+		echo "$(ts) status: ${hr:-no total yet} | MHz $(freqs) | caps ${cp:-none} | $(temps) | max ${tm:-?}C | cooling ${cl:-none} | $cur | threads on $on | cpu time per thread since the last status (cpu:percent) $(tload)"
 		nextst=$(( $(date +%s) + STS ))
 	fi
 	sleep 10
 done
 echo "$(ts) done: $samples samples, $changes changes, miner had fewer than all CPUs in $narrow samples ($(( narrow * 100 / (samples ? samples : 1) ))%)"
 echo "$(ts) average hashrate after the first 5 min: $(awk -v s="$sum" -v k="$cnt" 'BEGIN {if (k > 0) printf "%.1f kH/s over %d status lines", s / k, k; else print "n/a"}')"
+# one machine-readable line for comparisons: average kH/s, idle / average / peak hottest-CPU temperature, kH/s per
+# degree (absolute and above idle), status lines with a clock cap or an active cooling device (= throttled)
+echo "$(ts) thermal: $(awk -v s="$sum" -v k="$cnt" -v ti="${T_IDLE:-0}" -v ts="$tsum" -v tk="$tcnt" -v tp="$tpeak" -v th="$thr" -v n="$stn" 'BEGIN {
+	h = k > 0 ? s / k : 0; ta = tk > 0 ? ts / tk : 0
+	printf "khs=%.1f tidle=%d tavg=%.1f tpeak=%d khs_per_c=%.1f khs_per_c_rise=%s throttled=%d/%d", h, ti, ta, tp, ta > 0 ? h / ta : 0, ta > ti ? sprintf("%.1f", h / (ta - ti)) : "n/a", th, n }')"
 [ -n "$POOL" ] && { echo "$(ts) pool: $(grep -cE 'accepted: ' "$LOG") accepted-lines, last: $(grep -E 'accepted: ' "$LOG" | tail -1)"; grep -iE 'reject|stratum|diff|HASH CHECK' "$LOG" | tail -8; }
 echo "$(ts) miner hashrate lines (first/last):"; grep -E 'Total:|Summary:' "$LOG" | sed -n '1p;$p'
 echo "$(ts) variant per thread:"; grep -oE 'Verus thread [0-9]+.*' "$LOG" | sort -t' ' -k3,3n | uniq | head -16

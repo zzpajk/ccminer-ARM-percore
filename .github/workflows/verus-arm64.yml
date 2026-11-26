@@ -120,9 +120,9 @@ jobs:
             tests/verus_fullchecktest.cpp clplain.o hk.o hkp.o -o fullchecktest
           ./fullchecktest 200000 | tee -a difftest.txt
           grep -q 'fullchecktest.*PASS' difftest.txt
-          # against the reference: known-answer vectors (hellcatz/verushash-node verushash_v2_3_upgrade, whose 2.2
-          # matches VerusCoin), and the single-nonce clhash vs the reference round loop (result and mutated key;
-          # small key masks force the prand == prandex corner)
+          # VerusHash 2.3 (solution version 9+) and the 2.2 reference: known-answer vectors from the reference
+          # implementation (hellcatz/verushash-node verushash_v2_3_upgrade), the single-nonce clhash against the
+          # reference round loop (small key masks force the prand == prandex corner), the full-hash check in 2.3
           clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -I. -Iverus \
             tests/verus_kattest.cpp clplain.o hk.o hkp.o -o kattest
           ./kattest | tee -a difftest.txt
@@ -131,9 +131,20 @@ jobs:
             tests/verus_reftest.cpp clplain.o hk.o hkp.o -o reftest
           ./reftest 200000 | tee -a difftest.txt
           grep -q 'reftest.*PASS' difftest.txt
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_TEST_V23 -I. -Iverus \
+            tests/verus_fullchecktest.cpp clplain.o hk.o hkp.o -o fullchecktest23
+          ./fullchecktest23 200000 | tee -a difftest.txt
+          grep -q 'fullchecktest 2.3.*PASS' difftest.txt
+          # the lane code in 2.3 (SEL bit 20) against the single-nonce 2.3 loop: every value with a 2.3 form
+          for v in 2:7552 2:2467 2:419 2:483 2:384 2:0 3:2467 3:419 1:263296 1:396416 1:128; do
+            n=${v%%:*}; f=${v#*:}
+            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_TEST_V23 -DVERUS_LANES=$n -DVERUS_SEL_FORCE=$f -I. -Iverus \
+              tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2test23_${n}_${f}
+            ./x2test23_${n}_${f} 200000 | sed "s/x2test 2.3/x2test 2.3 $n-lane SEL $f/" | tee -a difftest.txt
+          done
           for v in baseline pristine x2percore x2percorep; do echo "banner $v: $(./out/ccminer-$v --version 2>&1 | grep -o 'Verus variant: .*' | head -1)" | tee -a difftest.txt; done
           ! grep -q FAIL difftest.txt
-          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 104 ]
+          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 115 ]
           grep -q 'pristinetest.*PASS' difftest.txt
       - name: One-step build script (build-verus.sh, system clang)
         run: |
@@ -142,6 +153,10 @@ jobs:
           ./ccminer-verus --version 2>&1 | grep -q 'Verus variant: x2percore+pristine'
           hs=$(./ccminer-verus -a verus --benchmark -t 1 --time-limit 10 --no-color 2>&1 | grep -E '^[0-9]+$' | tail -1)
           echo "build-verus.sh ok, 1T ${hs:-NONE} H/s" | tee -a difftest.txt
+          VERUS_V23=1 ./ccminer-verus -a verus --benchmark -t 1 --time-limit 10 --no-color > v23.log 2>&1 || true
+          grep -q 'VerusHash 2.3' v23.log
+          hs=$(grep -E '^[0-9]+$' v23.log | tail -1)
+          echo "build-verus.sh VERUS_V23=1 ok, 1T ${hs:-NONE} H/s" | tee -a difftest.txt
       - name: API JSON output (summary.json / threads.json over HTTP and the plain socket)
         run: |
           ./ccminer-verus -a verus --benchmark -t 2 -b 127.0.0.1:4068 --no-color > api-miner.log 2>&1 &
@@ -191,6 +206,8 @@ jobs:
               hs=$(env $e ./out/ccminer-$b -a verus --benchmark -t 1 --time-limit 20 --no-color 2>&1 | grep -E '^[0-9]+$' | tail -1)
               echo "round $r $v ${hs:-NONE} H/s" | tee -a bench.txt
             done
+            hs=$(VERUS_V23=1 VERUS_SEL=483 ./out/ccminer-x2percorepjt4 -a verus --benchmark -t 1 --time-limit 20 --no-color 2>&1 | grep -E '^[0-9]+$' | tail -1)
+            echo "round $r x2percorepjt4:483 VerusHash 2.3 ${hs:-NONE} H/s" | tee -a bench.txt
           done
       - name: Publish results as annotations
         if: always()

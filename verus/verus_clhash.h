@@ -24,6 +24,18 @@ uint64_t verusclhash_port2_1(void * random, const unsigned char buf[64], uint64_
 uint64_t verusclhash_port2_2(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex);
 uint64_t verusclhash_port2_2_nojournal(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex);
 uint64_t verusclhash_port2_2_nojournal_pre(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex);
+/* VerusHash 2.3 (solution version 9 and above): the 2.2 rounds plus one extra mixing step at the end of every
+ * round (two carry-less multiplies over all four buffer words and the two key words the round just wrote).
+ * Reference: hellcatz/verushash-node branch verushash_v2_3_upgrade (verusclhash_sv2_2_loop_port, v2_3 = true).
+ * Same arguments as the 2.2 functions above. */
+uint64_t verusclhash_port2_3(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex);
+uint64_t verusclhash_port2_3_nojournal(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex);
+uint64_t verusclhash_port2_3_nojournal_pre(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex);
+/* SEL bit 20 (1048576): VerusHash 2.3 rounds in the lane code (verusclhash_port2_2_xN). Not a tuning bit: it
+ * changes the hash. The miner adds it at run time when the job's solution version is 9 or above (or VERUS_V23=1).
+ * Instantiated for the per-core defaults only (their clhash values 0 128 163 227 2211 7296 two lanes, 163 2211
+ * three lanes, 128 1152 134272 one lane). Not with goto dispatch (8192) or VERUS_FUSE. */
+#define VERUS_V23 1048576
 /* variant "pristine": undo one hash's key mutations by copying the touched positions back from an
  * unmodified copy of the key. Order does not matter (every touched position gets its original value). */
 static inline void verus_fixkey_pristine(const uint16_t * __restrict fixrand, const uint16_t * __restrict fixrandex,

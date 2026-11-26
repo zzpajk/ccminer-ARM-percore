@@ -166,7 +166,7 @@ extern "C" void VerusHashHalf(void *result2, unsigned char *data, size_t len)
 
 extern "C" void Verus2hash(unsigned char *hash, unsigned char *curBuf, unsigned char *nonce,
         __m128i * __restrict data_key, uint8_t *gpu_init, uint16_t * __restrict fixrand, uint16_t * __restrict fixrandex, __m128i * __restrict g_prand,
-        __m128i * __restrict g_prandex, int version)
+        __m128i * __restrict g_prandex, int version)   /* version >= 9: VerusHash 2.3 */
 {
 	//uint64_t mask = VERUS_KEY_SIZE128; //552
 	//if (!gpu_init[0]) {
@@ -181,7 +181,7 @@ extern "C" void Verus2hash(unsigned char *hash, unsigned char *curBuf, unsigned 
 	uint64_t intermediate;
 	memcpy(curBuf + 32, nonce, 15);  //copy the 15bytes nonce
 
-	intermediate = verusclhash_port2_2(data_key, curBuf, 511, fixrand, fixrandex, g_prand, g_prandex);
+	intermediate = (version >= 9 ? verusclhash_port2_3 : verusclhash_port2_2)(data_key, curBuf, 511, fixrand, fixrandex, g_prand, g_prandex);
 
 	//__builtin_prefetch(&data_key[fixrand[0]],1,0);
 	//__builtin_prefetch(&data_key[fixrandex[0]],1,0);
@@ -223,6 +223,20 @@ static inline void Verus2hash_pristine(unsigned char *hash, unsigned char *curBu
 #define posix_memalign(p, a, s) (((*(p)) = _aligned_malloc((s), (a))), *(p) ?0 :errno)
 #endif
 
+/* VerusHash 2.3 replaces 2.2 from solution version 9 (hellcatz/verushash-node, branch verushash_v2_3_upgrade:
+ * versions 4..8 hash with 2.2, 9 and above with 2.3). The job's solution version picks it, so 2.2 stays in use
+ * until the chain activates 2.3. VERUS_V23=1 forces 2.3 (benchmarks before activation, the benchmark job has
+ * solution version 0), VERUS_V23=0 forces 2.2. */
+static bool verus_v23(int thr_id, uint8_t version)
+{
+	static int env = -2;
+	if (env == -2) { const char *e = getenv("VERUS_V23"); env = (e && (e[0] == '0' || e[0] == '1') && !e[1]) ? e[0] - '0' : -1; }
+	const bool on = env >= 0 ? env == 1 : version >= 9;
+	static __thread int logged = -1;
+	if (logged != (int)on) { logged = (int)on; applog(LOG_INFO, "Verus thread %d: VerusHash %s (solution version %d%s)", thr_id, on ? "2.3" : "2.2", version, env >= 0 ? ", forced by VERUS_V23" : ""); }
+	return on;
+}
+
 /* Full-hash check for share candidates.
  * The fast Haraka512 (haraka512_keyed) stores only the top 32 bits of the hash: that is all the search loop
  * compares with the target, and upstream submitted every nonce whose top word was <= the target's top word.
@@ -234,7 +248,7 @@ static inline void Verus2hash_pristine(unsigned char *hash, unsigned char *curBu
  * -1 if the portable top word differs from the fast one (should never happen: the caller then submits as
  * before). full[] receives the 8 hash words (little endian, word 7 most significant). */
 static int verus_full_check(uint32_t *full, const uint8_t *blockhash_half, const uint8_t *nonce15,
-		const __m128i *key, const uint32_t *target, uint32_t fast_top)
+		const __m128i *key, const uint32_t *target, uint32_t fast_top, bool v23)
 {
 	static __thread __m128i *kc = NULL;
 	if (!kc && posix_memalign((void **)&kc, 64, (VERUS_KEY_SIZE128 + 8) * sizeof(__m128i))) { kc = NULL; return -1; }
@@ -245,7 +259,7 @@ static int verus_full_check(uint32_t *full, const uint8_t *blockhash_half, const
 	memcpy(buf, blockhash_half, 64);
 	memcpy(buf + 47, buf, 16); memcpy(buf + 63, buf, 1);
 	memcpy(buf + 32, nonce15, 15);
-	uint64_t im = verusclhash_port2_2(kc, buf, 511, fr, fre, gp, gpx);
+	uint64_t im = (v23 ? verusclhash_port2_3 : verusclhash_port2_2)(kc, buf, 511, fr, fre, gp, gpx);
 	memcpy(buf + 47, &im, 8); memcpy(buf + 55, &im, 8); memcpy(buf + 63, &im, 1);
 	haraka512_port_keyed((unsigned char *)full, buf, kc + (im & 511));
 	if (full[7] != fast_top) {
@@ -476,7 +490,7 @@ struct verus_scan_ctx {
 	struct work *work; int thr_id; uint32_t max_nonce; unsigned long *hashes_done; uint32_t nonce_buf;
 	uint8_t *nonceSpace; uint8_t *full_data; uint8_t *sol_data; uint32_t Htarg; uint32_t *vhash;
 	__m128i *data_key; uint16_t *fixrand; uint16_t *fixrandex; __m128i *gp; __m128i *gpx;
-	uint8_t *blockhash_half; struct timeval tv_start; const __m128i *pristine;
+	uint8_t *blockhash_half; struct timeval tv_start; const __m128i *pristine; bool v23;
 };
 
 /* variants x2/x3/x4/auto: VERUS_LANES nonces per iteration, each lane with its own key copy (see verus_x2.h). */
@@ -514,13 +528,14 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 		}
 		memset(vh, 0, sizeof(vh));
 
-		Verus2hash_xN<NLT, ((NLT <= 2 || (NLT == 3 && (SEL == 3456 || SEL == 265600 || SEL == 419 || SEL == 2467))) ? SEL : 0)>(hp, L, np);   /* 3 lanes: only these values are instantiated */
+		constexpr int S0 = SEL & ~VERUS_V23;
+		Verus2hash_xN<NLT, ((NLT <= 2 || (NLT == 3 && (S0 == 3456 || S0 == 265600 || S0 == 419 || S0 == 2467))) ? SEL : 0)>(hp, L, np);   /* 3 lanes: only these values are instantiated */
 
 		for (int lane = 0; lane < NL; lane++) {
 			if (vh[lane][7] <= Htarg) {
 				((uint32_t *)(&nonceSpace[11]))[0] = nonce_buf + lane;
 				uint32_t full[8];
-				int ok = verus_full_check(full, c->blockhash_half, nonceSpace, c->data_key, work->target, vh[lane][7]);
+				int ok = verus_full_check(full, c->blockhash_half, nonceSpace, c->data_key, work->target, vh[lane][7], (SEL & VERUS_V23) != 0);
 				if (ok == 0 && !opt_submit_low) {   /* top word passed, full hash above the target: the pool would reject it */
 					gpulog(LOG_INFO, c->thr_id, "share above the pool target, not sent (%lu so far)",
 						__sync_add_and_fetch(&verus_not_sent, 1));
@@ -566,7 +581,7 @@ static int verus_sort_cb(void *p)
 		if (vh[7] <= c->Htarg && !q->found) {
 			((uint32_t *)(&c->nonceSpace[11]))[0] = s->nonce;
 			uint32_t full[8];
-			int ok = verus_full_check(full, c->blockhash_half, c->nonceSpace, c->data_key, work->target, vh[7]);
+			int ok = verus_full_check(full, c->blockhash_half, c->nonceSpace, c->data_key, work->target, vh[7], c->v23);
 			if (ok == 0 && !opt_submit_low) {
 				gpulog(LOG_INFO, c->thr_id, "share above the pool target, not sent (%lu so far)",
 					__sync_add_and_fetch(&verus_not_sent, 1));
@@ -664,6 +679,7 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 	memcpy(sol_data, block_41970, 3);
 	memcpy(sol_data + 3, work->solution, 1344);
 	uint8_t version = work->solution[0];
+	const bool v23 = verus_v23(thr_id, version);
 	uint8_t nonceSpace[15] = {0};  //pool nonce (32bit) + round(32bit) + thrd id (byte) + padding(2bytes) + counting nonce(32bit)
 
     if (version >= 7 && work->solution[5] > 0) {
@@ -701,8 +717,9 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 	 * case jump ("preload") */
 	static int pre1 = -1;
 	if (pre1 < 0) { const char *e = getenv("VERUS_PRE1"); pre1 = (e && e[0] == '1' && !e[1]) ? 1 : 0; }
-	uint64_t (*clfn)(void *, const unsigned char *, uint64_t, uint16_t *, uint16_t *) =
-		pre1 ? verusclhash_port2_2_nojournal_pre : verusclhash_port2_2_nojournal;
+	uint64_t (*clfn)(void *, const unsigned char *, uint64_t, uint16_t *, uint16_t *) = v23 ?
+		(pre1 ? verusclhash_port2_3_nojournal_pre : verusclhash_port2_3_nojournal) :
+		(pre1 ? verusclhash_port2_2_nojournal_pre : verusclhash_port2_2_nojournal);
 #endif
 #ifdef VERUS_X2
 	int sel = 0;
@@ -713,11 +730,25 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		struct verus_scan_ctx c = { work, thr_id, max_nonce, hashes_done, nonce_buf, nonceSpace, full_data, sol_data,
 			Htarg, vhash, data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half, tv_start,
 #ifdef VERUS_PRISTINE
-			pristine_key
+			pristine_key,
 #else
-			NULL
+			NULL,
 #endif
-			};
+			v23 };
+		if (v23) {
+			/* VerusHash 2.3: the per-core defaults have a 2.3 form (SEL bit 20); any other VERUS_SEL value runs plain x2 */
+			switch (sel) {
+			case 7552: verus_scan_lanes<7552 | VERUS_V23>(&c); break;
+			case 2467: if (verus_x3()) verus_scan_lanes<2467 | VERUS_V23, 3>(&c); else verus_scan_lanes<2467 | VERUS_V23>(&c); break;
+			case 483: verus_scan_lanes<483 | VERUS_V23>(&c); break;
+			case 419: if (verus_x3()) verus_scan_lanes<419 | VERUS_V23, 3>(&c); else verus_scan_lanes<419 | VERUS_V23>(&c); break;
+			case 384: verus_scan_lanes<384 | VERUS_V23>(&c); break;
+			default:
+				{ static __thread int logged = 0; if (!logged && sel != 0) { logged = 1; applog(LOG_WARNING, "Verus thread %d: SEL %d has no VerusHash 2.3 form, using SEL 0", thr_id, sel); } }
+				verus_scan_lanes<0 | VERUS_V23>(&c); break;
+			}
+			goto out;
+		}
 		if (c.pristine && verus_sort_on(thr_id)) sel = -7;
 		switch (sel) {
 #ifdef VERUS_ALL_VARIANTS
@@ -824,7 +855,16 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		if (use1 >= 0) {
 			{ static __thread int logged1 = 0; if (!logged1) { logged1 = 1; applog(LOG_INFO, "Verus thread %d: single-nonce lane code, SEL %d%s", thr_id, use1, use1 >= 1024 ? " (fold)" : ""); } }
 			struct verus_scan_ctx c = { work, thr_id, max_nonce, hashes_done, nonce_buf, nonceSpace, full_data, sol_data,
-				Htarg, vhash, data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half, tv_start, pristine_key };
+				Htarg, vhash, data_key, fixrand, fixrandex, data_key_prand, data_key_prandex, blockhash_half, tv_start, pristine_key, v23 };
+			if (v23) {
+				/* VerusHash 2.3: the A53 / A55 defaults have a 2.3 form; other VERUS_SEL1 values run SEL 128 */
+				switch (use1) {
+				case 396416: verus_scan_lanes<396416 | VERUS_V23, 1>(&c); break;
+				case 263296: verus_scan_lanes<263296 | VERUS_V23, 1>(&c); break;
+				default:     verus_scan_lanes<128 | VERUS_V23, 1>(&c); break;
+				}
+				goto out;
+			}
 			switch (use1) {
 #ifdef VERUS_ALL_VARIANTS
 			case 306304: verus_scan_lanes<306304, 1>(&c); break;
@@ -876,13 +916,13 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 				pristine_key, fixrand, fixrandex, clfn);
 #else
 		Verus2hash((unsigned char *)vhash, (unsigned char *)blockhash_half, nonceSpace, data_key,
-				&gpuinit, fixrand, fixrandex , data_key_prand, data_key_prandex, version);
+				&gpuinit, fixrand, fixrandex , data_key_prand, data_key_prandex, v23 ? 9 : 4);
 #endif
 
 		if (  vhash[7] <= Htarg )
 		{
 			uint32_t full[8];
-			int ok = verus_full_check(full, blockhash_half, nonceSpace, data_key, work->target, vhash[7]);
+			int ok = verus_full_check(full, blockhash_half, nonceSpace, data_key, work->target, vhash[7], v23);
 			if (ok == 0 && !opt_submit_low) {   /* top word passed, full hash above the target: the pool would reject it */
 				gpulog(LOG_INFO, thr_id, "share above the pool target, not sent (%lu so far)",
 					__sync_add_and_fetch(&verus_not_sent, 1));

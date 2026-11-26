@@ -507,8 +507,9 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 			}
 			else
 			{
-				*prand = VPRE_Y;
+				const __m128i tempb3 = VPRE_Y;   /* prand == prandex: the reference stores prandex first, so the prand store wins (VerusCoin verus_clhash) */
 				_mm_store_si128_emu(prandex, tempa2);
+				_mm_store_si128_emu(prand, tempb3);
 				const __m128i tempb4 = VPRE_B;
 				acc = _mm_xor_si128_emu(tempb4, acc);
 			}
@@ -538,8 +539,9 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 			const __m128i tempa1 = VPRE_X;
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
 
-			*prand = VPRE_Y;
+			const __m128i tempa4 = VPRE_Y;   /* prand == prandex: the reference stores prandex first, so the prand store wins (VerusCoin verus_clhash) */
 			*prandex = _mm_xor_si128_emu(tempa1, tempa2);
+			*prand = tempa4;
 			break;
 		}
 		case 0x14:
@@ -642,8 +644,9 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 
 			const __m128i tempa1 = VPRE_X;
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
-			*prand = VPRE_Y;
+			const __m128i tempa4 = VPRE_Y;   /* prand == prandex: the reference stores prandex first, so the prand store wins (VerusCoin verus_clhash) */
 			*prandex = _mm_xor_si128_emu(tempa1, tempa2);
+			*prand = tempa4;
 
 			break;
 		}
@@ -710,8 +713,9 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
                 }
 
 
-                *prand = _mm_xor_si128_emu(VPRE_Y, acc);
+                const __m128i tempa4 = _mm_xor_si128_emu(VPRE_Y, acc);   /* prand == prandex: the reference stores prandex first, so the prand store wins (VerusCoin verus_clhash) */
                 _mm_store_si128_emu(prandex, onekey);
+                *prand = tempa4;
                 break;
             }
 		default: 
@@ -1010,10 +1014,10 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 
 			if (SEL & 32) {
 				/* SEL bit 5 (32): the 50/50 'dividend & 1' choice without a branch. Both arms are computed;
-				 * the two stores go to the same addresses in the same order as the arm taken, so the
+				 * both arms store prandex first and prand last, as the reference does, so the
 				 * prand == prandex corner stays identical:
 				 *   odd:  *prandex = tempa2; acc ^= clmul(Y ^ Q) ^ clmul(Q); *prand = mulhrs(acc, Y) ^ Y
-				 *   even: *prand = Y;        *prandex = tempa2;              acc ^= Q */
+				 *   even: *prandex = tempa2; *prand = Y;                     acc ^= Q */
 				const uint64_t odd = (uint64_t)dividend & 1;
 				const __m128i Y = VPRE_Y;
 				const __m128i Q = VPRE_B;
@@ -1022,10 +1026,9 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 				const __m128i fodd = _mm_xor_si128_emu(_mm_clmulepi64_si128_emu(v, v, 0x10), _mm_clmulepi64_si128_emu(Q, Q, 0x10));
 				acc = _mm_xor_si128_emu(acc, vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(fodd), vreinterpretq_u64_s64(Q))));
 				const __m128i lastodd = _mm_xor_si128_emu(_mm_mulhrs_epi16_emu(acc, Y), Y);
-				__m128i *p1 = odd ? prandex : prand;
-				__m128i *p2 = odd ? prand : prandex;
-				_mm_store_si128_emu(p1, vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(tempa2), vreinterpretq_u64_s64(Y))));
-				_mm_store_si128_emu(p2, vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(lastodd), vreinterpretq_u64_s64(tempa2))));
+				/* both arms store prandex = tempa2 first, then prand (the reference order) */
+				_mm_store_si128_emu(prandex, tempa2);
+				_mm_store_si128_emu(prand, vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(lastodd), vreinterpretq_u64_s64(Y))));
 			} else
 			if (dividend & 1)
 			{
@@ -1045,8 +1048,9 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			}
 			else
 			{
-				*prand = VPRE_Y;
+				const __m128i vy_last = VPRE_Y;   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
 				_mm_store_si128_emu(prandex, tempa2);
+				_mm_store_si128_emu(prand, vy_last);
 				const __m128i tempb4 = VPRE_B;
 				acc = _mm_xor_si128_emu(tempb4, acc);
 			}
@@ -1076,8 +1080,11 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			const __m128i tempa1 = VPRE_X;
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
 
-			*prand = VPRE_Y;
-			*prandex = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = VPRE_Y;   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
+
+			  *prandex = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prand = vy_last; }
 			break;
 		}
 		case VERUS_CASEL(0x14):
@@ -1182,8 +1189,9 @@ if (SEL & 1) {
 
 			const __m128i tempa1 = VPRE_X;
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
-			*prand = VPRE_Y;
-			*prandex = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = VPRE_Y;   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
+			  *prandex = _mm_xor_si128_emu(tempa1, tempa2);
+			  *prand = vy_last; }
 
 			break;
 		}
@@ -1273,8 +1281,13 @@ if (SEL & 2) {
                 }
 
 
-                *prand = _mm_xor_si128_emu(VPRE_Y, acc);
-                _mm_store_si128_emu(prandex, onekey);
+                { const __m128i vy_last = _mm_xor_si128_emu(VPRE_Y, acc);   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
+
+
+                  _mm_store_si128_emu(prandex, onekey);
+
+
+                  *prand = vy_last; }
                 break;
             }
 		if (VERUS_FOLD) {
@@ -1322,8 +1335,9 @@ if (SEL & 2) {
 			{
 				const __m128i tempa1 = VPRE_X;
 				const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
-				*prand = VPRE_Y;
-				*prandex = _mm_xor_si128_emu(tempa1, tempa2);
+				{ const __m128i vy_last = VPRE_Y;   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
+				  *prandex = _mm_xor_si128_emu(tempa1, tempa2);
+				  *prand = vy_last; }
 			}
 			break;
 #define VERUS_F18(r) verus_f18_##r: { \
@@ -1361,8 +1375,9 @@ if (SEL & 2) {
 			} }
 			VERUS_F18(7) VERUS_F18(6) VERUS_F18(5) VERUS_F18(4) VERUS_F18(3) VERUS_F18(2) VERUS_F18(1) VERUS_F18(0)
 #undef VERUS_F18
-			*prand = _mm_xor_si128_emu(VPRE_Y, acc);
-			_mm_store_si128_emu(prandex, f_ok);
+			{ const __m128i vy_last = _mm_xor_si128_emu(VPRE_Y, acc);   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
+			  _mm_store_si128_emu(prandex, f_ok);
+			  *prand = vy_last; }
 			break;
 		}
 		case VERUS_CASED(0): case VERUS_CASED(1): case VERUS_CASED(2): case VERUS_CASED(3):
@@ -1486,14 +1501,16 @@ if (SEL & 2) {
 	{ __m128i *p0 = rsl[l] + ((selv >> 5) & keyMask); \
 	  const __m128i tempa1 = _mm_load_si128_emu(p0); \
 	  const __m128i tempa2 = _mm_mulhrs_epi16_emu(ac[l], tempa1); \
-	  *p0 = _mm_load_si128_emu(prandex); \
+	  const __m128i vy_last = _mm_load_si128_emu(prandex);   /* prandex first, prand last (reference order) */ \
 	  *prandex = _mm_xor_si128_emu(tempa1, tempa2); \
+	  *p0 = vy_last; \
 	  f_aes = 0; } AFTER \
 	VERUS_GT_R18(P, l, A, a, 7) VERUS_GT_R18(P, l, A, a, 6) VERUS_GT_R18(P, l, A, a, 5) VERUS_GT_R18(P, l, A, a, 4) \
 	VERUS_GT_R18(P, l, A, a, 3) VERUS_GT_R18(P, l, A, a, 2) VERUS_GT_R18(P, l, A, a, 1) VERUS_GT_R18(P, l, A, a, 0) \
 	{ __m128i *p0 = rsl[l] + ((selv >> 5) & keyMask); \
-	  *p0 = _mm_xor_si128_emu(_mm_load_si128_emu(prandex), ac[l]); \
-	  _mm_store_si128_emu(prandex, f_ok); } AFTER
+	  const __m128i vy_last = _mm_xor_si128_emu(_mm_load_si128_emu(prandex), ac[l]);   /* prandex first (reference order) */ \
+	  _mm_store_si128_emu(prandex, f_ok); \
+	  *p0 = vy_last; } AFTER
 #define VERUS_GT_COPIES_0(P, l, A, AFTER) VERUS_GT_COPY(P, l, A, 0, AFTER)
 #define VERUS_GT_COPIES_1(P, l, A, AFTER) VERUS_GT_COPY(P, l, A, 0, AFTER) VERUS_GT_COPY(P, l, A, 1, AFTER)
 #define VERUS_GT_COPIES_2(P, l, A, AFTER) VERUS_GT_COPY(P, l, A, 0, AFTER) VERUS_GT_COPY(P, l, A, 1, AFTER) \
@@ -1824,7 +1841,8 @@ template void verusclhash_port2_2_xN<4, 163>(void **, const unsigned char **, ui
 template void verusclhash_port2_2_xN<6, 163>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 #endif
 #endif
-/* BEGIN GENERATED x2fuse (tools/gen_fuse.py) */
+/* BEGIN GENERATED x2fuse (tools/gen_fuse.py; the prand == prandex store order of cases 0x0c / 0x10 / 0x14 / 0x18
+ * was fixed by hand afterwards, 2026-11-26: prandex first, prand last, as the reference) */
 #ifdef VERUS_ALL_VARIANTS   /* sorted hashing: measured slower on every core, test builds only */
 #include "verus_sort.h"
 uint64_t verus_sort_reduce(const __m128i *acc)
@@ -2158,8 +2176,11 @@ F_0_4:
 			const __m128i tempa1 = _mm_load_si128_emu(prandB);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accB, tempa1);
 
-			*prandB = *prandexB;
-			*prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexB;
+
+			  *prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandB = vy_last; }
 			
 	}
 	goto NEXT;
@@ -2416,8 +2437,11 @@ F_1_4:
 			const __m128i tempa1 = _mm_load_si128_emu(prandB);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accB, tempa1);
 
-			*prandB = *prandexB;
-			*prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexB;
+
+			  *prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandB = vy_last; }
 			
 	}
 	goto NEXT;
@@ -2672,8 +2696,11 @@ F_2_4:
 			const __m128i tempa1 = _mm_load_si128_emu(prandB);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accB, tempa1);
 
-			*prandB = *prandexB;
-			*prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexB;
+
+			  *prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandB = vy_last; }
 			
 	}
 	goto NEXT;
@@ -2759,8 +2786,11 @@ F_4_0:
 			const __m128i tempa1 = _mm_load_si128_emu(prandA);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accA, tempa1);
 
-			*prandA = *prandexA;
-			*prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexA;
+
+			  *prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandA = vy_last; }
 			
 	}
 	{
@@ -2814,8 +2844,11 @@ F_4_1:
 			const __m128i tempa1 = _mm_load_si128_emu(prandA);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accA, tempa1);
 
-			*prandA = *prandexA;
-			*prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexA;
+
+			  *prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandA = vy_last; }
 			
 	}
 	{
@@ -2867,8 +2900,11 @@ F_4_2:
 			const __m128i tempa1 = _mm_load_si128_emu(prandA);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accA, tempa1);
 
-			*prandA = *prandexA;
-			*prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexA;
+
+			  *prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandA = vy_last; }
 			
 	}
 	{
@@ -2921,8 +2957,11 @@ F_4_4:
 			const __m128i tempa1 = _mm_load_si128_emu(prandA);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accA, tempa1);
 
-			*prandA = *prandexA;
-			*prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexA;
+
+			  *prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandA = vy_last; }
 			
 	}
 	{
@@ -2948,8 +2987,11 @@ F_4_4:
 			const __m128i tempa1 = _mm_load_si128_emu(prandB);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accB, tempa1);
 
-			*prandB = *prandexB;
-			*prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexB;
+
+			  *prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandB = vy_last; }
 			
 	}
 	goto NEXT;
@@ -2979,8 +3021,11 @@ F_4_7:
 			const __m128i tempa1 = _mm_load_si128_emu(prandA);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accA, tempa1);
 
-			*prandA = *prandexA;
-			*prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexA;
+
+			  *prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandA = vy_last; }
 			
 	}
 	{
@@ -3215,8 +3260,11 @@ F_7_4:
 			const __m128i tempa1 = _mm_load_si128_emu(prandB);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accB, tempa1);
 
-			*prandB = *prandexB;
-			*prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexB;
+
+			  *prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandB = vy_last; }
 			
 	}
 	goto NEXT;
@@ -3385,8 +3433,9 @@ A_3:
 			}
 			else
 			{
-				*prandA = *prandexA;
-				_mm_store_si128_emu(prandexA, tempa2);
+				{ const __m128i vy_last = *prandexA;
+				  _mm_store_si128_emu(prandexA, tempa2);
+				  *prandA = vy_last; }
 				const __m128i tempb4 = _mm_load_si128_emu(pbufA);
 				accA = _mm_xor_si128_emu(tempb4, accA);
 			}
@@ -3417,8 +3466,11 @@ A_4:
 			const __m128i tempa1 = _mm_load_si128_emu(prandA);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accA, tempa1);
 
-			*prandA = *prandexA;
-			*prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexA;
+
+			  *prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandA = vy_last; }
 			
 	}
 	goto *nextB;
@@ -3498,8 +3550,9 @@ A_5:
 
 			const __m128i tempa1 = _mm_load_si128_emu(prandA);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accA, tempa1);
-			*prandA = *prandexA;
-			*prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexA;
+			  *prandexA = _mm_xor_si128_emu(tempa1, tempa2);
+			  *prandA = vy_last; }
 
 			
 	}
@@ -3567,8 +3620,13 @@ A_6:
                 }
 
 
-                *prandA = _mm_xor_si128_emu(*prandexA, accA);
-                _mm_store_si128_emu(prandexA, onekey);
+                { const __m128i vy_last = _mm_xor_si128_emu(*prandexA, accA);
+
+
+                  _mm_store_si128_emu(prandexA, onekey);
+
+
+                  *prandA = vy_last; }
                 
 	}
 	goto *nextB;
@@ -3713,8 +3771,9 @@ B_3:
 			}
 			else
 			{
-				*prandB = *prandexB;
-				_mm_store_si128_emu(prandexB, tempa2);
+				{ const __m128i vy_last = *prandexB;
+				  _mm_store_si128_emu(prandexB, tempa2);
+				  *prandB = vy_last; }
 				const __m128i tempb4 = _mm_load_si128_emu(pbufB);
 				accB = _mm_xor_si128_emu(tempb4, accB);
 			}
@@ -3745,8 +3804,11 @@ B_4:
 			const __m128i tempa1 = _mm_load_si128_emu(prandB);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accB, tempa1);
 
-			*prandB = *prandexB;
-			*prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexB;
+
+			  *prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+
+			  *prandB = vy_last; }
 			
 	}
 	goto NEXT;
@@ -3826,8 +3888,9 @@ B_5:
 
 			const __m128i tempa1 = _mm_load_si128_emu(prandB);
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(accB, tempa1);
-			*prandB = *prandexB;
-			*prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+			{ const __m128i vy_last = *prandexB;
+			  *prandexB = _mm_xor_si128_emu(tempa1, tempa2);
+			  *prandB = vy_last; }
 
 			
 	}
@@ -3895,8 +3958,13 @@ B_6:
                 }
 
 
-                *prandB = _mm_xor_si128_emu(*prandexB, accB);
-                _mm_store_si128_emu(prandexB, onekey);
+                { const __m128i vy_last = _mm_xor_si128_emu(*prandexB, accB);
+
+
+                  _mm_store_si128_emu(prandexB, onekey);
+
+
+                  *prandB = vy_last; }
                 
 	}
 	goto NEXT;

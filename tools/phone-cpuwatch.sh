@@ -29,7 +29,7 @@ for o in "$@"; do
 	case "$o" in
 		VERUS_SELMAP=*)
 			case "${o#*=}" in ''|*[!0-9a-fA-F:=,]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
-		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_SORT=*)
+		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_SORT=*|VERUS_V23=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
 		stune) STUNE=1;;   # apply the scheduler settings of github.com/iSonik/S9-Tweak- (root; restored at the end)
 		pool=*) # a real pool session on a local-network stratum, only at the user's explicit request
@@ -112,7 +112,7 @@ if [ -n "$CAPMHZ" ]; then
 	echo "$(ts) fast cores capped at $((CAPF/1000)) MHz:$CAPPED (read back: $(for c in $CAPPED; do printf '%s ' $(( $(cat $C/$c/cpufreq/scaling_max_freq) / 1000 )); done))"
 fi
 LOG="$HOME/verus-runs/cpuwatch-miner.log"
-echo "$(date '+%F %T') variant environment: $(env | grep -E '^VERUS_(SEL|SEL1|LANES|PRE1|X3|SELMAP)=' | tr '\n' ' ')(empty = built-in defaults)"
+echo "$(date '+%F %T') variant environment: $(env | grep -E '^VERUS_(SEL|SEL1|LANES|PRE1|X3|SELMAP|SORT|V23)=' | tr '\n' ' ')(empty = built-in defaults)"
 if [ -n "$POOL" ]; then
 	echo "$(date '+%F %T') POOL session on $POOL as $WORKER (password x)"
 	"$BIN" -a verus -o "$POOL" -u "$WORKER" -p x -t "$NCPU" --no-color --summary-interval=60 "$@" > "$LOG" 2>&1 < /dev/null &

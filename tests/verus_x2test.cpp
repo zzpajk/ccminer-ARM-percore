@@ -1,10 +1,20 @@
 /* Checks that the two-nonce interleaved path (variant x2) produces exactly what two single-nonce runs
- * produce: same 32-byte hashes, same restored key. Build with -DVERUS_X2 (see the CI workflow). */
+ * produce: same 32-byte hashes, same restored key. Build with -DVERUS_X2 (see the CI workflow).
+ * -DVERUS_TEST_V23: the same for VerusHash 2.3 (lane code with SEL bit 20 against verusclhash_port2_3). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include "verus_x2.h"
+#ifdef VERUS_TEST_V23
+#  define VT_CL verusclhash_port2_3
+#  define VT_SEL (VERUS_SEL_DEFAULT | VERUS_V23)
+#  define VT_NAME "x2test 2.3"
+#else
+#  define VT_CL verusclhash_port2_2
+#  define VT_SEL VERUS_SEL_DEFAULT
+#  define VT_NAME "x2test"
+#endif
 
 static uint64_t rs = 0x9E3779B97F4A7C15ULL;
 static uint64_t rnd(void) { rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17; return rs; }
@@ -16,7 +26,7 @@ static void single(unsigned char *hash, unsigned char *buf, const unsigned char 
 {
 	memcpy(buf + 47, buf, 16); memcpy(buf + 63, buf, 1);
 	memcpy(buf + 32, nonce, 15);
-	uint64_t im = verusclhash_port2_2(key, buf, 511, fr, fre, gp, gpx);
+	uint64_t im = VT_CL(key, buf, 511, fr, fre, gp, gpx);
 	memcpy(buf + 47, &im, 8); memcpy(buf + 55, &im, 8); memcpy(buf + 63, &im, 1);
 	haraka512_keyed(hash, buf, key + (im & 511));
 	for (int i = 31; i > -1; i--) { key[fr[i]] = gp[i]; key[fre[i]] = gpx[i]; }
@@ -48,13 +58,13 @@ int main(int argc, char **argv)
 			L[l] = (struct verus_lane){ keyL[l], frL[l], freL[l], gpL[l], gpxL[l], bL[l], key0 };   /* key0 = pristine copy (SEL bit 128) */
 			hp[l] = hL[l]; np[l] = nonce[l];
 		}
-		Verus2hash_xN<VERUS_LANES>(hp, L, np);
+		Verus2hash_xN<VERUS_LANES, VT_SEL>(hp, L, np);
 
 		bool ok = !memcmp(keyS, key0, sizeof(key0));
 		for (int l = 0; l < N; l++)
 			ok = ok && !memcmp(hS[l], hL[l], 32) && !memcmp(keyL[l], key0, sizeof(key0));
 		if (!ok) { if (bad < 5) printf("mismatch at iteration %ld\n", it); bad++; }
 	}
-	printf("x2test (%d lanes): %ld iterations, %ld mismatches -> %s\n", N, iters, bad, bad ? "FAIL" : "PASS");
+	printf(VT_NAME " (%d lanes): %ld iterations, %ld mismatches -> %s\n", N, iters, bad, bad ? "FAIL" : "PASS");
 	return bad != 0;
 }

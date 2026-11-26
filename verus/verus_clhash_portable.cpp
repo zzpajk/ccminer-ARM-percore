@@ -19,6 +19,9 @@
 
 
 #include "haraka_portable.h"
+#ifndef VERUS_V23
+#define VERUS_V23 1048576   /* SEL bit 20, VerusHash 2.3 (as in verus_clhash.h) */
+#endif
 
 #include <assert.h>
 #include <string.h>
@@ -329,7 +332,31 @@ uint8x16_t _mm_aesenc_si128 (uint8x16_t a, uint8x16_t RoundKey)
 /* JOURNAL = true: the original code, which saves the old value of both key positions every round so
  * FixKey() can undo the mutations afterwards. JOURNAL = false (variant "pristine"): no saves; the caller
  * restores the touched positions from a pristine copy of the key instead (64 fewer vector stores per hash). */
-template<bool JOURNAL, bool PRE = false>
+/* VerusHash 2.3 (solution version 9+): every round ends with this step, after the case body (so it also sees
+ * the prand == prandex corner exactly as the reference does: both key words are read back from memory).
+ * Reference: hellcatz/verushash-node verushash_v2_3_upgrade, verusclhash_sv2_2_loop_port with v2_3 = true:
+ *   p, q, px, qx = buffer words (selector & 3) ^ 0, 1, 2, 3;  rc = (hi -1, lo round + 1)
+ *   clp = clmul(p ^ qx ^ *prand ^ *prandex);  clq = clmul(q ^ px ^ p ^ clp ^ rc);  acc ^= clp ^ clq ^ rc
+ * (clmul(x) = low half of x times high half of x, imm 0x10). */
+FORCE_INLINE __m128i verus_v23_step(__m128i acc, const uint64_t selector, const uint64_t i, const __m128i *pbuf_copy,
+		const __m128i *prand, const __m128i *prandex)
+{
+	const uint64_t pi = selector & 3;
+	const __m128i p = _mm_load_si128_emu(pbuf_copy + pi);
+	const __m128i q = _mm_load_si128_emu(pbuf_copy + (pi ^ 1));
+	const __m128i px = _mm_load_si128_emu(pbuf_copy + (pi ^ 2));
+	const __m128i qx = _mm_load_si128_emu(pbuf_copy + (pi ^ 3));
+	const __m128i rcst = _mm_set_epi64x_emu((uint64_t)-1, i + 1);
+	const __m128i addp = _mm_xor_si128_emu(_mm_xor_si128_emu(p, qx), _mm_xor_si128_emu(_mm_load_si128_emu(prand), _mm_load_si128_emu(prandex)));
+	const __m128i clp = _mm_clmulepi64_si128_emu(addp, addp, 0x10);
+	const __m128i p2 = _mm_xor_si128_emu(_mm_xor_si128_emu(p, clp), rcst);
+	const __m128i addq = _mm_xor_si128_emu(_mm_xor_si128_emu(q, px), p2);
+	const __m128i clq = _mm_clmulepi64_si128_emu(addq, addq, 0x10);
+	return _mm_xor_si128_emu(acc, _mm_xor_si128_emu(_mm_xor_si128_emu(clp, clq), rcst));
+}
+
+/* V23 = true: VerusHash 2.3 (verus_v23_step at the end of every round). */
+template<bool JOURNAL, bool PRE = false, bool V23 = false>
 FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __m128i buf[4], uint64_t keyMask, uint16_t * __restrict fixrand, 
 										uint16_t * __restrict fixrandex, __m128i *g_prand, __m128i *g_prandex)
 {
@@ -742,7 +769,7 @@ FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __
 		}
 		}
 
-   
+		if (V23) acc = verus_v23_step(acc, selector, i, pbuf_copy, prand, prandex);
 	}
 	return acc;
 }
@@ -1411,7 +1438,10 @@ if (SEL & 2) {
 			goto verus_case_1c;
 		}
 
-   
+		/* SEL bit 20 (VERUS_V23): VerusHash 2.3. The goto dispatch (8192) runs cases 0x14 / 0x18 outside this
+		 * function and passes round 0, so it has no 2.3 form. */
+		static_assert(!((SEL & VERUS_V23) && (SEL & 8192)), "VerusHash 2.3 is not implemented for the goto dispatch");
+		if (SEL & VERUS_V23) acc = verus_v23_step(acc, selector, i, pbuf_copy, prand, prandex);
 	}
 
 #undef VERUS_FOLD
@@ -1835,6 +1865,19 @@ template void verusclhash_port2_2_xN<1, 672>(void **, const unsigned char **, ui
 template void verusclhash_port2_2_xN<3, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<4, 0>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 #endif
+/* VerusHash 2.3 (SEL bit 20): the clhash values of the per-core defaults (7552 -> 7296, 2467 -> 2211, 419 -> 163,
+ * 483 -> 227, 384 -> 128; one lane 263296 -> 1152, 396416 -> 134272) and the plain fallbacks (two lanes 0, one lane 128) */
+template void verusclhash_port2_2_xN<2, 0 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 128 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 163 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 227 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 2211 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<2, 7296 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<3, 163 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<3, 2211 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 128 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 1152 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<1, 134272 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 #ifdef VERUS_ABL_LANES_EXTRA   /* tests/verus_ablate.cpp only (timing experiments): more lanes of the SEL 419 rounds */
 #ifdef VERUS_ALL_VARIANTS
 template void verusclhash_port2_2_xN<4, 163>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
@@ -4022,6 +4065,25 @@ uint64_t verusclhash_port2_2(void * random, const unsigned char buf[64], uint64_
 uint64_t verusclhash_port2_2_nojournal(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand,
 		uint16_t * __restrict fixrandex) {
     __m128i  acc = verusclmul_repeat_port2_2_t<false>((__m128i *)random, (const __m128i *)buf, keyMask, fixrand, fixrandex, 0, 0);
+    acc = _mm_xor_si128_emu(acc, _mm_cvtsi32_si128_emu(0x10000));
+    return precompReduction64_port(acc);
+}
+/* VerusHash 2.3 counterparts of the three single-nonce functions (verus_v23_step after every round) */
+uint64_t verusclhash_port2_3(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand, uint16_t * __restrict fixrandex,
+								 __m128i *g_prand, __m128i *g_prandex) {
+    __m128i  acc = verusclmul_repeat_port2_2_t<true, false, true>((__m128i *)random, (const __m128i *)buf, keyMask, fixrand, fixrandex, g_prand, g_prandex);
+    acc = _mm_xor_si128_emu(acc, _mm_cvtsi32_si128_emu(0x10000));
+    return precompReduction64_port(acc);
+}
+uint64_t verusclhash_port2_3_nojournal(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand,
+		uint16_t * __restrict fixrandex) {
+    __m128i  acc = verusclmul_repeat_port2_2_t<false, false, true>((__m128i *)random, (const __m128i *)buf, keyMask, fixrand, fixrandex, 0, 0);
+    acc = _mm_xor_si128_emu(acc, _mm_cvtsi32_si128_emu(0x10000));
+    return precompReduction64_port(acc);
+}
+uint64_t verusclhash_port2_3_nojournal_pre(void * random, const unsigned char buf[64], uint64_t keyMask, uint16_t *  __restrict fixrand,
+		uint16_t * __restrict fixrandex) {
+    __m128i  acc = verusclmul_repeat_port2_2_t<false, true, true>((__m128i *)random, (const __m128i *)buf, keyMask, fixrand, fixrandex, 0, 0);
     acc = _mm_xor_si128_emu(acc, _mm_cvtsi32_si128_emu(0x10000));
     return precompReduction64_port(acc);
 }

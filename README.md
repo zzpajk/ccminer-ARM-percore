@@ -186,6 +186,16 @@ You can see each thread's choice when the miner starts, for example
 (or `VERUS_SELMAP` per core type) before starting. The normal build only contains the versions above;
 build with `--all-variants` to try the experimental ones.
 
+### VerusHash 2.3
+
+VerusHash 2.3 is planned to replace 2.2 with solution version 9. The miner reads the solution version of
+each job and switches by itself: 2.2 up to version 8, 2.3 from version 9 on, so nothing needs changing
+when the network moves. Every per-core version above has a 2.3 form. To benchmark 2.3 before then, set
+`VERUS_V23=1` (`VERUS_V23=0` forces 2.2); the start log says which one each thread runs, for example
+`Verus thread 0: VerusHash 2.3 (solution version 0, forced by VERUS_V23)`. The 2.3 code follows the
+reference in hellcatz/verushash-node (branch `verushash_v2_3_upgrade`); the VerusCoin daemon has not
+published 2.3 yet, so the details may still change.
+
 ## For developers
 
 - `build-verus.sh` builds the miner in any checkout (`bash build-verus.sh`); the install scripts call it.

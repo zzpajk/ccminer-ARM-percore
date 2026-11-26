@@ -8,6 +8,13 @@
 #include <string.h>
 #include <stdint.h>
 #include "verus_clhash.h"
+#ifdef VERUS_TEST_V23   /* VerusHash 2.3 */
+#  define VT_CL verusclhash_port2_3
+#  define VT_NAME "fullchecktest 2.3"
+#else
+#  define VT_CL verusclhash_port2_2
+#  define VT_NAME "fullchecktest"
+#endif
 extern "C" {
 #include "haraka_portable.h"
 #include "haraka.h"
@@ -26,7 +33,7 @@ static void hash_once(uint32_t *out, int full, const unsigned char *half, const 
 	memcpy(buf, half, 64);
 	memcpy(buf + 47, buf, 16); memcpy(buf + 63, buf, 1);
 	memcpy(buf + 32, nonce, 15);
-	uint64_t im = verusclhash_port2_2(key, buf, 511, fr, fre, gp, gpx);
+	uint64_t im = VT_CL(key, buf, 511, fr, fre, gp, gpx);
 	memcpy(buf + 47, &im, 8); memcpy(buf + 55, &im, 8); memcpy(buf + 63, &im, 1);
 	if (full) haraka512_port_keyed((unsigned char *)out, buf, key + (im & 511));
 	else haraka512_keyed((unsigned char *)out, buf, key + (im & 511));
@@ -60,7 +67,7 @@ int main(int argc, char **argv)
 		for (int i = 7; i >= 0; i--) { if (full[i] < target[i]) { ok = 1; break; } if (full[i] > target[i]) { ok = 0; break; } }
 		if (!ok) low++;
 	}
-	printf("fullchecktest: %ld hashes, %ld mismatches, %.1f%% of top-word candidates above the target -> %s\n",
+	printf(VT_NAME ": %ld hashes, %ld mismatches, %.1f%% of top-word candidates above the target -> %s\n",
 		iters, bad, 100.0 * low / (cand ? cand : 1), bad ? "FAIL" : "PASS");
 	return bad ? 1 : 0;
 }

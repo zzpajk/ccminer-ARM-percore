@@ -72,6 +72,11 @@ fi
 [ -n "$BIN" ] || BIN=$(ls -t "$HOME"/verus-runs/work-bench-*/bin/ccminer-x2percorep-jt4 2>/dev/null | head -1)
 [ -n "$BIN" ] || BIN=$(ls -t "$HOME"/verus-runs/work-bench-*/bin/ccminer-x2percorep 2>/dev/null | head -1)
 [ -x "${BIN:-}" ] || { echo "no benchmark binary found under ~/verus-runs (run a bench job first)"; exit 1; }
+# run a private copy: verusProxy's watchdog kills every process started as its own miner path (~/ccminer/ccminer-verus)
+# while a job runs, and that would end the benchmark after its first minute
+if [ "$BIN" = "$HOME/ccminer/ccminer-verus" ]; then
+	mkdir -p "$HOME/verus-runs/cpuwatch-bin" && cp -f "$BIN" "$HOME/verus-runs/cpuwatch-bin/ccminer-verus" && BIN="$HOME/verus-runs/cpuwatch-bin/ccminer-verus"
+fi
 NCPU=$(grep -c ^processor /proc/cpuinfo); ALL=$(cat /sys/devices/system/cpu/present 2>/dev/null || echo "0-$((NCPU-1))")
 ts() { date '+%F %T'; }
 C=/sys/devices/system/cpu
@@ -90,7 +95,7 @@ freqs() { local o="" c; for c in $C/cpu[0-9]*; do o="$o $(( $(cat $c/cpufreq/sca
 caps() { local o="" c mx sm; for c in $C/cpu[0-9]*; do mx=$(cat $c/cpufreq/cpuinfo_max_freq 2>/dev/null); sm=$(cat $c/cpufreq/scaling_max_freq 2>/dev/null)
 	[ -n "$mx" ] && [ -n "$sm" ] && [ "$sm" -lt "$mx" ] && o="$o ${c##*/}:$((sm/1000))/$((mx/1000))"; done; echo "${o# }"; }
 temps() { local o="" z t v n=0; for z in /sys/class/thermal/thermal_zone*; do t=$(cat $z/type 2>/dev/null); v=$(cat $z/temp 2>/dev/null)
-	case "$t" in *[Cc][Pp][Uu]*|*[Bb][Ii][Gg]*|*[Ll][Ii][Tt][Tt][Ll][Ee]*|*[Mm][Ii][Dd]*|*AP*|*ap_*|*soc*|*SOC*) ;; *) continue;; esac
+	case "$t" in *[Cc][Pp][Uu]*|*[Bb][Ii][Gg]*|*[Ll][Ii][Tt][Tt][Ll][Ee]*|*[Mm][Ii][Dd]*|*AP*|*ap_*|*soc*|*SOC*|*MNGS*|*[Mm][Oo][Nn][Gg]*|*ATLAS*) ;; *) continue;; esac
 	[ -n "$v" ] || continue; [ "$v" -gt 1000 ] && v=$((v/1000)); o="$o $t=${v}C"; n=$((n+1)); [ $n -ge 6 ] && break; done; echo "${o# }"; }
 # hottest CPU-type thermal zone in whole degrees C (empty if none readable)
 tmax() { temps | tr ' ' '\n' | sed -n 's/.*=\([0-9-]*\)C$/\1/p' | sort -n | tail -1; }
@@ -192,4 +197,4 @@ echo "$(ts) thermal: $(awk -v s="$sum" -v k="$cnt" -v ti="${T_IDLE:-0}" -v ts="$
 	printf "khs=%.1f tidle=%d tavg=%.1f tpeak=%d khs_per_c=%.1f khs_per_c_rise=%s throttled=%d/%d", h, ti, ta, tp, (ta > 0 ? h / ta : 0), (ta > ti ? sprintf("%.1f", h / (ta - ti)) : "n/a"), th, n }')"
 [ -n "$POOL" ] && { echo "$(ts) pool: $(grep -cE 'accepted: ' "$LOG") accepted-lines, last: $(grep -E 'accepted: ' "$LOG" | tail -1)"; grep -iE 'reject|stratum|diff|HASH CHECK' "$LOG" | tail -8; }
 echo "$(ts) miner hashrate lines (first/last):"; grep -E 'Total:|Summary:' "$LOG" | sed -n '1p;$p'
-echo "$(ts) variant per thread:"; grep -oE 'Verus thread [0-9]+.*' "$LOG" | sort -t' ' -k3,3n | uniq | head -16
+echo "$(ts) variant per thread:"; grep -oE 'Verus thread [0-9]+.*' "$LOG" | sort -t' ' -k3,3n | uniq | head -40

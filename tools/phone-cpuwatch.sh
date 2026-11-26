@@ -47,9 +47,22 @@ set -- ${MOPTS[@]+"${MOPTS[@]}"}
 F=/dev/cpuset/foreground/cpus
 SU=""
 for s in /system/bin/su /system/xbin/su /sbin/su /debug_ramdisk/su /data/adb/magisk/su; do [ -x "$s" ] && { SU=$s; break; }; done
-for p in /proc/[0-9]*; do
-	case "$(cat "$p/comm" 2>/dev/null)" in ccminer*) echo "another ccminer is running (pid ${p#/proc/}: $(tr '\0' ' ' < "$p/cmdline" | cut -c1-80)); stop it first"; exit 1;; esac
-done
+other_miner() { local p; for p in /proc/[0-9]*; do case "$(cat "$p/comm" 2>/dev/null)" in ccminer*) echo "${p#/proc/}"; return 0;; esac; done; return 1; }
+# verusProxy's watchdog (~/.termux/boot/verusproxy-setup, lock ~/.verusproxy/boot.lock) keeps the phone's miner running.
+# It checks every 60 s for a job under ~/verus-runs/, then stops the miner, writes ~/.verusproxy/miner.paused and
+# starts the miner again after the job. So with a live watchdog, wait for it (up to 180 s) instead of failing.
+VPW=/data/data/com.termux/files/home/.verusproxy
+if op=$(other_miner); then
+	wd=$(cat "$VPW/boot.lock/pid" 2>/dev/null)
+	if [ -n "$wd" ] && kill -0 "$wd" 2>/dev/null; then
+		echo "$(date '+%F %T') ccminer pid $op runs under the verusProxy watchdog (pid $wd): waiting for it to pause the miner"
+		for i in $(seq 36); do sleep 5; op=$(other_miner) || break; done
+		[ -f "$VPW/miner.paused" ] && echo "$(date '+%F %T') watchdog paused the miner ($VPW/miner.paused); it restarts it after this job"
+	fi
+fi
+if op=$(other_miner); then
+	echo "another ccminer is running (pid $op: $(tr '\0' ' ' < /proc/$op/cmdline | cut -c1-80)); stop it first"; exit 1
+fi
 BIN=""
 if [ -n "$WANTBIN" ]; then
 	BIN=$(ls -t "$HOME"/verus-runs/work-bench-*/bin/ccminer-"$WANTBIN" 2>/dev/null | head -1)

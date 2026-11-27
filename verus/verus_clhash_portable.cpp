@@ -380,6 +380,23 @@ FORCE_INLINE __m128i verus_v23_step_t(__m128i acc, const uint64_t selector, cons
 	const __m128i clq = _mm_clmulepi64_si128_emu(addq, addq, 0x10);
 	return _mm_xor_si128_emu(acc, _mm_xor_si128_emu(t, clq));
 }
+/* verus_v23_step_t with the two key words the round just stored passed in registers (vpr / vpx = the last
+ * values stored to prand / prandex). When prand == prandex both reads see the same word, so their XOR is 0. */
+FORCE_INLINE __m128i verus_v23_step_r(__m128i acc, const uint64_t selector, const uint64_t i, const __m128i *pbuf_copy,
+		const __m128i vpr, const __m128i vpx, const bool same)
+{
+	const uint64_t pi = selector & 3;
+	const __m128i pqx = _mm_load_si128_emu(pbuf_copy + 8 + ((pi ^ (pi >> 1)) & 1));
+	const __m128i qpxp = _mm_load_si128_emu(pbuf_copy + 4 + pi);
+	const __m128i rcst = _mm_set_epi64x_emu((uint64_t)-1, i + 1);
+	const __m128i keep = vreinterpretq_s64_u64(vdupq_n_u64(same ? 0 : ~0ULL));
+	const __m128i addp = _mm_xor_si128_emu(pqx, vandq_s64(keep, _mm_xor_si128_emu(vpr, vpx)));
+	const __m128i clp = _mm_clmulepi64_si128_emu(addp, addp, 0x10);
+	const __m128i t = _mm_xor_si128_emu(clp, rcst);
+	const __m128i addq = _mm_xor_si128_emu(qpxp, t);
+	const __m128i clq = _mm_clmulepi64_si128_emu(addq, addq, 0x10);
+	return _mm_xor_si128_emu(acc, _mm_xor_si128_emu(t, clq));
+}
 /* V23 = true: VerusHash 2.3 (verus_v23_step at the end of every round). */
 template<bool JOURNAL, bool PRE = false, bool V23 = false>
 FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __m128i buf[4], uint64_t keyMask, uint16_t * __restrict fixrand, 
@@ -894,6 +911,12 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 		}
 		__m128i *prand = (SEL & 8192) ? xprand : randomsource + ((SEL & 2048) ? ((selector >> 5) & keyMask) : (uint64_t)fixrand[i]);
 		__m128i *prandex = (SEL & 8192) ? xprandex : randomsource + ((SEL & 2048) ? ((selector >> 32) & keyMask) : (uint64_t)fixrandex[i]);
+		/* 2.3: the values this round stores, handed to the step in registers instead of reloaded (bit-exact:
+		 * when prand == prandex the step's *prand ^ *prandex is 0, see verus_v23_step_r) */
+		__m128i v23_pr = _mm_setzero_si128(), v23_px = _mm_setzero_si128();
+		(void)v23_pr; (void)v23_px;
+#define VST_PR(v) do { const __m128i vst_ = (v); _mm_store_si128_emu(prand, vst_); v23_pr = vst_; } while (0)
+#define VST_PX(v) do { const __m128i vst_ = (v); _mm_store_si128_emu(prandex, vst_); v23_px = vst_; } while (0)
 		if (!(SEL & 128)) {   /* bit 128: no journal, the caller restores from a pristine key copy */
 			g_prand[i] = *prand;
 			g_prandex[i] = *prandex;
@@ -968,9 +991,9 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			const __m128i P = _mm_load_si128_emu(pp);
 			const __m128i Q = _mm_load_si128_emu(pq);
 			acc = _mm_xor_si128_emu(acc, verus_light_f(_mm_xor_si128_emu(X, P), P, mk));
-			_mm_store_si128_emu(pb, _mm_xor_si128_emu(_mm_mulhrs_epi16_emu(acc, X), X));
+			{ const __m128i vb_ = _mm_xor_si128_emu(_mm_mulhrs_epi16_emu(acc, X), X); _mm_store_si128_emu(pb, vb_); v23_pr = vb_; }   /* (the 2.3 step only needs the XOR of both) */
 			acc = _mm_xor_si128_emu(acc, verus_light_f(_mm_xor_si128_emu(Y, Q), Q, mk + 4));
-			_mm_store_si128_emu(pa, _mm_xor_si128_emu(_mm_mulhrs_epi16_emu(acc, Y), Y));
+			{ const __m128i va_ = _mm_xor_si128_emu(_mm_mulhrs_epi16_emu(acc, Y), Y); _mm_store_si128_emu(pa, va_); v23_px = va_; }
 			break;
 		}
 		{
@@ -984,7 +1007,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp1);
 
 			const __m128i temp12 = VPRE_X;
-			_mm_store_si128_emu(prand, tempa2);
+			VST_PR(tempa2);
 
 			const __m128i temp22 = VPRE_B;
 			const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
@@ -992,7 +1015,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			acc = _mm_xor_si128_emu(clprod12, acc);
 
 			const __m128i tempb1 = _mm_mulhrs_epi16_emu(acc, temp12);
-			*prandex  = _mm_xor_si128_emu(tempb1, temp12);
+			VST_PX(_mm_xor_si128_emu(tempb1, temp12));
 			break;
 		}
 		VERUS_CASE8(4):
@@ -1009,7 +1032,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp1);
 
 			const __m128i temp12 = VPRE_Y;
-			_mm_store_si128_emu(prandex, tempa2);
+			VST_PX(tempa2);
 
 			const __m128i temp22 = VPRE_S;
 			const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
@@ -1017,7 +1040,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 
 			const __m128i tempb1 = _mm_mulhrs_epi16_emu(acc, temp12);
 			const __m128i tempb2 = _mm_xor_si128_emu(tempb1, temp12);
-			_mm_store_si128_emu(prand, tempb2);
+			VST_PR(tempb2);
 			break;
 		}
 		VERUS_CASE8(8):
@@ -1031,7 +1054,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp1);
 
 			const __m128i temp12 = VPRE_X;
-			_mm_store_si128_emu(prand, tempa2);
+			VST_PR(tempa2);
 
 			const __m128i temp22 = VPRE_S;
 			const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
@@ -1042,7 +1065,7 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 
 			const __m128i tempb1 = _mm_mulhrs_epi16_emu(acc, temp12);
 			const __m128i tempb2 = _mm_xor_si128_emu(tempb1, temp12);
-			_mm_store_si128_emu(prandex, tempb2);
+			VST_PX(tempb2);
 			break;
 		}
 		VERUS_CASE8(0xc):
@@ -1079,13 +1102,13 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 				acc = _mm_xor_si128_emu(acc, vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(fodd), vreinterpretq_u64_s64(Q))));
 				const __m128i lastodd = _mm_xor_si128_emu(_mm_mulhrs_epi16_emu(acc, Y), Y);
 				/* both arms store prandex = tempa2 first, then prand (the reference order) */
-				_mm_store_si128_emu(prandex, tempa2);
-				_mm_store_si128_emu(prand, vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(lastodd), vreinterpretq_u64_s64(Y))));
+				VST_PX(tempa2);
+				VST_PR(vreinterpretq_s64_u64(vbslq_u64(m, vreinterpretq_u64_s64(lastodd), vreinterpretq_u64_s64(Y))));
 			} else
 			if (dividend & 1)
 			{
 				const __m128i temp12 = VPRE_Y;
-				_mm_store_si128_emu(prandex, tempa2);
+				VST_PX(tempa2);
 
 				const __m128i temp22 = VPRE_B;
 				const __m128i add12 = _mm_xor_si128_emu(temp12, temp22);
@@ -1096,13 +1119,13 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 
 				const __m128i tempb1 = _mm_mulhrs_epi16_emu(acc, temp12);
 				const __m128i tempb2 = _mm_xor_si128_emu(tempb1, temp12);
-				_mm_store_si128_emu(prand, tempb2);
+				VST_PR(tempb2);
 			}
 			else
 			{
 				const __m128i vy_last = VPRE_Y;   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
-				_mm_store_si128_emu(prandex, tempa2);
-				_mm_store_si128_emu(prand, vy_last);
+				VST_PX(tempa2);
+				VST_PR(vy_last);
 				const __m128i tempb4 = VPRE_B;
 				acc = _mm_xor_si128_emu(tempb4, acc);
 			}
@@ -1134,9 +1157,9 @@ FORCE_INLINE void verus_round_port2_2(__m128i &acc, const uint64_t i, __m128i *r
 
 			{ const __m128i vy_last = VPRE_Y;   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
 
-			  *prandex = _mm_xor_si128_emu(tempa1, tempa2);
+			  VST_PX(_mm_xor_si128_emu(tempa1, tempa2));
 
-			  *prand = vy_last; }
+			  VST_PR(vy_last); }
 			break;
 		}
 		case VERUS_CASEL(0x14):
@@ -1242,8 +1265,8 @@ if (SEL & 1) {
 			const __m128i tempa1 = VPRE_X;
 			const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
 			{ const __m128i vy_last = VPRE_Y;   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
-			  *prandex = _mm_xor_si128_emu(tempa1, tempa2);
-			  *prand = vy_last; }
+			  VST_PX(_mm_xor_si128_emu(tempa1, tempa2));
+			  VST_PR(vy_last); }
 
 			break;
 		}
@@ -1336,10 +1359,10 @@ if (SEL & 2) {
                 { const __m128i vy_last = _mm_xor_si128_emu(VPRE_Y, acc);   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
 
 
-                  _mm_store_si128_emu(prandex, onekey);
+                  VST_PX(onekey);
 
 
-                  *prand = vy_last; }
+                  VST_PR(vy_last); }
                 break;
             }
 		if (VERUS_FOLD) {
@@ -1388,8 +1411,8 @@ if (SEL & 2) {
 				const __m128i tempa1 = VPRE_X;
 				const __m128i tempa2 = _mm_mulhrs_epi16_emu(acc, tempa1);
 				{ const __m128i vy_last = VPRE_Y;   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
-				  *prandex = _mm_xor_si128_emu(tempa1, tempa2);
-				  *prand = vy_last; }
+				  VST_PX(_mm_xor_si128_emu(tempa1, tempa2));
+				  VST_PR(vy_last); }
 			}
 			break;
 #define VERUS_F18(r) verus_f18_##r: { \
@@ -1428,8 +1451,8 @@ if (SEL & 2) {
 			VERUS_F18(7) VERUS_F18(6) VERUS_F18(5) VERUS_F18(4) VERUS_F18(3) VERUS_F18(2) VERUS_F18(1) VERUS_F18(0)
 #undef VERUS_F18
 			{ const __m128i vy_last = _mm_xor_si128_emu(VPRE_Y, acc);   /* prand == prandex: prandex is stored first, the prand store wins (as in the reference) */
-			  _mm_store_si128_emu(prandex, f_ok);
-			  *prand = vy_last; }
+			  VST_PX(f_ok);
+			  VST_PR(vy_last); }
 			break;
 		}
 		case VERUS_CASED(0): case VERUS_CASED(1): case VERUS_CASED(2): case VERUS_CASED(3):
@@ -1446,14 +1469,14 @@ if (SEL & 2) {
 			const __m128i tempa2 = _mm_xor_si128_emu(tempa1, temp2);
 
 			const __m128i tempa3 = VPRE_X;
-			_mm_store_si128_emu(prand, tempa2);
+			VST_PR(tempa2);
 
 			acc = _mm_xor_si128_emu(tempa3, acc);
 			const __m128i temp4 = VPRE_S;
 			acc = _mm_xor_si128(temp4, acc);
 			const __m128i tempb1 = _mm_mulhrs_epi16_emu(acc, tempa3);
 			const __m128i tempb2 = _mm_xor_si128_emu(tempb1, tempa3);
-			_mm_store_si128_emu(prandex, tempb2);
+			VST_PX(tempb2);
 			break;
 		}
 		default:
@@ -1467,7 +1490,9 @@ if (SEL & 2) {
 		 * function and passes round 0, so it has no 2.3 form. */
 		static_assert(!((SEL & VERUS_V23) && (SEL & 8192)), "VerusHash 2.3 is not implemented for the goto dispatch");
 		/* (all 2.3 callers of this function are in verusclhash_port2_2_xN, whose pc has the table) */
-		if (SEL & VERUS_V23) acc = verus_v23_step_t(acc, selector, i, pbuf_copy, prand, prandex);
+		if (SEL & VERUS_V23) acc = verus_v23_step_r(acc, selector, i, pbuf_copy, v23_pr, v23_px, prand == prandex);
+#undef VST_PR
+#undef VST_PX
 	}
 
 #undef VERUS_FOLD

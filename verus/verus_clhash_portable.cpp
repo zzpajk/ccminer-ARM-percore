@@ -355,6 +355,31 @@ FORCE_INLINE __m128i verus_v23_step(__m128i acc, const uint64_t selector, const 
 	return _mm_xor_si128_emu(acc, _mm_xor_si128_emu(_mm_xor_si128_emu(clp, clq), rcst));
 }
 
+/* The same step from a table built once per hash (verus_v23_table): pbuf_copy[4 + pi] = q ^ px ^ p and
+ * pbuf_copy[8 + j] = p ^ qx (only two distinct values: j = 0 for pi 0 / 3, 1 for pi 1 / 2). Then
+ *   clp = clmul(p ^ qx ^ *prand ^ *prandex);  t = clp ^ rc;  clq = clmul((q ^ px ^ p) ^ t);  acc ^= t ^ clq
+ * which is the reference step with 2 loads and 4 XORs fewer per round. */
+FORCE_INLINE void verus_v23_table(__m128i *pc)
+{
+	for (int pi = 0; pi < 4; pi++)
+		pc[4 + pi] = _mm_xor_si128_emu(_mm_xor_si128_emu(pc[pi ^ 1], pc[pi ^ 2]), pc[pi]);
+	pc[8] = _mm_xor_si128_emu(pc[0], pc[3]);
+	pc[9] = _mm_xor_si128_emu(pc[1], pc[2]);
+}
+FORCE_INLINE __m128i verus_v23_step_t(__m128i acc, const uint64_t selector, const uint64_t i, const __m128i *pbuf_copy,
+		const __m128i *prand, const __m128i *prandex)
+{
+	const uint64_t pi = selector & 3;
+	const __m128i pqx = _mm_load_si128_emu(pbuf_copy + 8 + ((pi ^ (pi >> 1)) & 1));
+	const __m128i qpxp = _mm_load_si128_emu(pbuf_copy + 4 + pi);
+	const __m128i rcst = _mm_set_epi64x_emu((uint64_t)-1, i + 1);
+	const __m128i addp = _mm_xor_si128_emu(pqx, _mm_xor_si128_emu(_mm_load_si128_emu(prand), _mm_load_si128_emu(prandex)));
+	const __m128i clp = _mm_clmulepi64_si128_emu(addp, addp, 0x10);
+	const __m128i t = _mm_xor_si128_emu(clp, rcst);
+	const __m128i addq = _mm_xor_si128_emu(qpxp, t);
+	const __m128i clq = _mm_clmulepi64_si128_emu(addq, addq, 0x10);
+	return _mm_xor_si128_emu(acc, _mm_xor_si128_emu(t, clq));
+}
 /* V23 = true: VerusHash 2.3 (verus_v23_step at the end of every round). */
 template<bool JOURNAL, bool PRE = false, bool V23 = false>
 FORCE_INLINE __m128i verusclmul_repeat_port2_2_t(__m128i *randomsource, const __m128i buf[4], uint64_t keyMask, uint16_t * __restrict fixrand, 
@@ -1441,7 +1466,8 @@ if (SEL & 2) {
 		/* SEL bit 20 (VERUS_V23): VerusHash 2.3. The goto dispatch (8192) runs cases 0x14 / 0x18 outside this
 		 * function and passes round 0, so it has no 2.3 form. */
 		static_assert(!((SEL & VERUS_V23) && (SEL & 8192)), "VerusHash 2.3 is not implemented for the goto dispatch");
-		if (SEL & VERUS_V23) acc = verus_v23_step(acc, selector, i, pbuf_copy, prand, prandex);
+		/* (all 2.3 callers of this function are in verusclhash_port2_2_xN, whose pc has the table) */
+		if (SEL & VERUS_V23) acc = verus_v23_step_t(acc, selector, i, pbuf_copy, prand, prandex);
 	}
 
 #undef VERUS_FOLD
@@ -1603,7 +1629,7 @@ void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t k
 	__m128i *rs[N];
 	uint16_t * __restrict fr[N], * __restrict fre[N];
 	__m128i *gp[N], *gpx[N];
-	__m128i pc[N][4];
+	__m128i pc[N][(SEL & VERUS_V23) ? 10 : 4];   /* 2.3: + the table of verus_v23_table */
 	__m128i acc[N];
 #pragma clang loop unroll(full)
 	for (int l = 0; l < N; l++) {
@@ -1611,11 +1637,12 @@ void verusclhash_port2_2_xN(void **random, const unsigned char **buf, uint64_t k
 		rs[l] = (__m128i *)random[l];
 		fr[l] = fixrand_in[l]; fre[l] = fixrandex_in[l]; gp[l] = g_prand_in[l]; gpx[l] = g_prandex_in[l];
 		pc[l][0] = _mm_xor_si128(a[0], a[2]); pc[l][1] = _mm_xor_si128(a[1], a[3]); pc[l][2] = a[2]; pc[l][3] = a[3];
+		if (SEL & VERUS_V23) verus_v23_table(pc[l]);
 		acc[l] = _mm_load_si128_emu(rs[l] + (keyMask + 2));
 	}
 #if defined(__GNUC__)
 	if ((N == 1 || N == 2) && (SEL & 8192)) {
-		verus_goto_sel<N, SEL, ((N == 1 || N == 2) && (SEL & 8192)) ? ((SEL >> 14) & 3) : -1>::run(acc, rs, pc, (uint16_t *const *)fr, keyMask);
+		verus_goto_sel<N, SEL, ((N == 1 || N == 2) && (SEL & 8192)) ? ((SEL >> 14) & 3) : -1>::run(acc, rs, (const __m128i (*)[4])pc, (uint16_t *const *)fr, keyMask);   /* (never 2.3) */
 	} else
 	if ((N == 1 || N == 2) && (SEL & 4096)) {
 		/* SEL bit 12 (4096), "threaded": needs fold (1024). Every case body ends with its own copy of the

@@ -391,11 +391,14 @@ FORCE_INLINE __m128i verus_v23_step_r(__m128i acc, const uint64_t selector, cons
 	const __m128i rcst = _mm_set_epi64x_emu((uint64_t)-1, i + 1);
 	const __m128i keep = vreinterpretq_s64_u64(vdupq_n_u64(same ? 0 : ~0ULL));
 	const __m128i addp = _mm_xor_si128_emu(pqx, vandq_s64(keep, _mm_xor_si128_emu(vpr, vpx)));
+	/* qpxp ^ rc and acc ^ rc do not need clp, so they run while the first PMULL is in flight: one XOR between
+	 * the two multiplies instead of two (one XOR more per round in total; the hash is unchanged) */
+	const __m128i early = _mm_xor_si128_emu(qpxp, rcst);
+	const __m128i acc2 = _mm_xor_si128_emu(acc, rcst);
 	const __m128i clp = _mm_clmulepi64_si128_emu(addp, addp, 0x10);
-	const __m128i t = _mm_xor_si128_emu(clp, rcst);
-	const __m128i addq = _mm_xor_si128_emu(qpxp, t);
+	const __m128i addq = _mm_xor_si128_emu(clp, early);
 	const __m128i clq = _mm_clmulepi64_si128_emu(addq, addq, 0x10);
-	return _mm_xor_si128_emu(acc, _mm_xor_si128_emu(t, clq));
+	return _mm_xor_si128_emu(_mm_xor_si128_emu(acc2, clp), clq);
 }
 /* V23 = true: VerusHash 2.3 (verus_v23_step at the end of every round). */
 template<bool JOURNAL, bool PRE = false, bool V23 = false>

@@ -17,7 +17,8 @@ set -u
 MIN="${1:-120}"; MODE="${2:-widen}"; CAPMHZ=""
 # MODE may carry ",capNNNN": cap the fast cores (all CPUs above the slowest cluster) at NNNN MHz (root)
 CAPTOP=0
-case "$MODE" in *,captop*) CAPMHZ="${MODE##*,captop}"; MODE="${MODE%%,*}"; CAPTOP=1;; *,cap*) CAPMHZ="${MODE##*,cap}"; MODE="${MODE%%,*}";; esac
+case "$MODE" in *,captop*) CAPMHZ="${MODE##*,captop}"; MODE="${MODE%%,*}"; CAPTOP=1;; *,capmid*) CAPMHZ="${MODE##*,capmid}"; MODE="${MODE%%,*}"; CAPTOP=2;; *,cap*) CAPMHZ="${MODE##*,cap}"; MODE="${MODE%%,*}";; esac
+# ",capmidNNNN": cap only the middle cluster(s) (e.g. the S20's A76: at full clock it halves the A55s' throughput)
 # ",captopNNNN": cap only the fastest cluster (highest cpuinfo_max_freq), e.g. the S10's Mongoose M4
 case "$CAPMHZ" in *[!0-9]*) echo "bad cap value $CAPMHZ"; exit 2;; esac
  STS="${3:-300}"; shift $(( $# < 3 ? $# : 3 ))
@@ -121,6 +122,7 @@ if [ -n "$CAPMHZ" ]; then
 	for c in $C/cpu[0-9]*; do
 		mx=$(cat $c/cpufreq/cpuinfo_max_freq 2>/dev/null); [ -n "$mx" ] && [ "$mx" -gt "$lo" ] || continue
 		[ "$CAPTOP" = 1 ] && [ "$mx" -lt "$hi" ] && continue
+		[ "$CAPTOP" = 2 ] && [ "$mx" -ge "$hi" ] && continue   # capmid: neither the slowest nor the fastest cluster
 		# largest available frequency <= the cap
 		f=$(tr ' ' '\n' < $c/cpufreq/scaling_available_frequencies 2>/dev/null | awk -v t=$((CAPMHZ*1000)) '$1 <= t && $1 > b {b = $1} END {print b+0}')
 		[ "$f" -gt 0 ] || f=$((CAPMHZ*1000))

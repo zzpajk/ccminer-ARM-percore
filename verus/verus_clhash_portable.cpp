@@ -1930,6 +1930,9 @@ template void verusclhash_port2_2_xN<2, 2211 | VERUS_V23>(void **, const unsigne
 template void verusclhash_port2_2_xN<2, 7296 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 163 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<3, 2211 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+/* three lanes without the two-arm divide (SEL bit 2 off: 2465 / 417, testing aid) */
+template void verusclhash_port2_2_xN<3, 2209 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
+template void verusclhash_port2_2_xN<3, 161 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 /* four lanes (VERUS_X4=1, testing aid for the 64 KB-L1D big cores) */
 template void verusclhash_port2_2_xN<4, 2211 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);
 template void verusclhash_port2_2_xN<4, 163 | VERUS_V23>(void **, const unsigned char **, uint64_t, uint16_t **, uint16_t **, __m128i **, __m128i **, uint64_t *);

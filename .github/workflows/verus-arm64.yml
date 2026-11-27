@@ -136,7 +136,7 @@ jobs:
           ./fullchecktest23 200000 | tee -a difftest.txt
           grep -q 'fullchecktest 2.3.*PASS' difftest.txt
           # the lane code in 2.3 (SEL bit 20) against the single-nonce 2.3 loop: every value with a 2.3 form
-          for v in 2:7552 2:2467 2:419 2:483 2:384 2:0 3:2467 3:419 1:263296 1:396416 1:128; do
+          for v in 2:7552 2:2467 2:419 2:483 2:384 2:0 3:2467 3:419 4:2467 4:419 1:263296 1:396416 1:128; do
             n=${v%%:*}; f=${v#*:}
             clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_TEST_V23 -DVERUS_LANES=$n -DVERUS_SEL_FORCE=$f -I. -Iverus \
               tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2test23_${n}_${f}

@@ -460,6 +460,17 @@ static inline bool verus_x3()
 	return t == 1;
 }
 
+/* testing aid, VerusHash 2.3 only: VERUS_X4=1 runs four nonces per step on the cores whose 2.3 SEL is
+ * 7552, 2467 or 419 (four key copies, ~35 KB: meant for the 64 KB L1D of A75 / A76 / M3-M5). 7552 cores run
+ * the 2467 form, since 7552's threaded rounds are two-lane only. Off unless set. */
+static inline bool verus_x4()
+{
+	static int env = -2;
+	if (env == -2) { const char *e = getenv("VERUS_X4"); env = (e && e[0] == '1' && !e[1]) ? 1 : 0;
+		if (env) applog(LOG_INFO, "VERUS_X4=1: four nonces per step on the 2.3 SEL 7552 / 2467 / 419 cores"); }
+	return env == 1;
+}
+
 static int verus_lanes_for_this_core(int thr_id, int *sel)
 {
 #ifdef VERUS_AUTO
@@ -529,7 +540,7 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 		memset(vh, 0, sizeof(vh));
 
 		constexpr int S0 = SEL & ~VERUS_V23;
-		Verus2hash_xN<NLT, ((NLT <= 2 || (NLT == 3 && (S0 == 3456 || S0 == 265600 || S0 == 419 || S0 == 2467))) ? SEL : 0)>(hp, L, np);   /* 3 lanes: only these values are instantiated */
+		Verus2hash_xN<NLT, ((NLT <= 2 || (NLT == 3 && (S0 == 3456 || S0 == 265600 || S0 == 419 || S0 == 2467)) || (NLT == 4 && (SEL & VERUS_V23) && (S0 == 419 || S0 == 2467))) ? SEL : 0)>(hp, L, np);   /* 3/4 lanes: only these values are instantiated */
 
 		for (int lane = 0; lane < NL; lane++) {
 			if (vh[lane][7] <= Htarg) {
@@ -738,10 +749,11 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		if (v23) {
 			/* VerusHash 2.3: the per-core defaults have a 2.3 form (SEL bit 20); any other VERUS_SEL value runs plain x2 */
 			switch (sel) {
-			case 7552: verus_scan_lanes<7552 | VERUS_V23>(&c); break;
-			case 2467: if (verus_x3()) verus_scan_lanes<2467 | VERUS_V23, 3>(&c); else verus_scan_lanes<2467 | VERUS_V23>(&c); break;
+			case 7552: if (verus_x4()) verus_scan_lanes<2467 | VERUS_V23, 4>(&c);   /* 7552's threaded form is two-lane only */
+				else verus_scan_lanes<7552 | VERUS_V23>(&c); break;
+			case 2467: if (verus_x4()) verus_scan_lanes<2467 | VERUS_V23, 4>(&c); else if (verus_x3()) verus_scan_lanes<2467 | VERUS_V23, 3>(&c); else verus_scan_lanes<2467 | VERUS_V23>(&c); break;
 			case 483: verus_scan_lanes<483 | VERUS_V23>(&c); break;
-			case 419: if (verus_x3()) verus_scan_lanes<419 | VERUS_V23, 3>(&c); else verus_scan_lanes<419 | VERUS_V23>(&c); break;
+			case 419: if (verus_x4()) verus_scan_lanes<419 | VERUS_V23, 4>(&c); else if (verus_x3()) verus_scan_lanes<419 | VERUS_V23, 3>(&c); else verus_scan_lanes<419 | VERUS_V23>(&c); break;
 			case 384: verus_scan_lanes<384 | VERUS_V23>(&c); break;
 			default:
 				{ static __thread int logged = 0; if (!logged && sel != 0) { logged = 1; applog(LOG_WARNING, "Verus thread %d: SEL %d has no VerusHash 2.3 form, using SEL 0", thr_id, sel); } }

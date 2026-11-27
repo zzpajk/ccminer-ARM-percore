@@ -197,4 +197,5 @@ echo "$(ts) thermal: $(awk -v s="$sum" -v k="$cnt" -v ti="${T_IDLE:-0}" -v ts="$
 	printf "khs=%.1f tidle=%d tavg=%.1f tpeak=%d khs_per_c=%.1f khs_per_c_rise=%s throttled=%d/%d", h, ti, ta, tp, (ta > 0 ? h / ta : 0), (ta > ti ? sprintf("%.1f", h / (ta - ti)) : "n/a"), th, n }')"
 [ -n "$POOL" ] && { echo "$(ts) pool: $(grep -cE 'accepted: ' "$LOG") accepted-lines, last: $(grep -E 'accepted: ' "$LOG" | tail -1)"; grep -iE 'reject|stratum|diff|HASH CHECK' "$LOG" | tail -8; }
 echo "$(ts) miner hashrate lines (first/last):"; grep -E 'Total:|Summary:' "$LOG" | sed -n '1p;$p'
+grep -q 'Summary:.*| kH/s T0' "$LOG" && { echo "$(ts) per-thread kH/s (--summary-interval, last 5):"; grep -oE 'Summary: .*' "$LOG" | tail -5; }
 echo "$(ts) variant per thread:"; grep -oE 'Verus thread [0-9]+.*' "$LOG" | sort -t' ' -k3,3n | uniq | head -40

@@ -6,6 +6,11 @@
 #   cpus     "auto" (default: the first allowed CPU of every cluster) or a list such as 0,4
 #   mode     stat | record | both (default both) | full (record, then every instruction of each function
 #            holding >= 2% of the samples, with its share: long output)
+#            | tid: ONE miner with a thread on each of cpus 0..N-1 (cpus must be "0,1,..,N-1"; the miner pins thread i
+#            to cpu i), then "sels" passes of the given seconds on the cpu0 worker TID: cycles, instructions and
+#            task-clock (simpleperf stat -t), its run / runqueue-wait time (schedstat) and its kH/s; plus the online
+#            CPUs and where every miner thread ran. Tells clock loss (cycles per task-clock), lost CPU time
+#            (task-clock per wall second, runqueue wait) and real slowdown (cycles per hash) apart.
 #   sels     "default" (the miner's own per-core choice) or a list such as default,384,419: one run per value,
 #            the numbers are passed as VERUS_SEL. "l1" forces VERUS_LANES=1 (single-nonce loop).
 #            "sN" (s128, s1152) sets VERUS_SEL1=N: single-nonce cores through the lane code with one lane.
@@ -17,7 +22,7 @@ set -u
 SEC="${1:-30}"; CPUS="${2:-auto}"; MODE="${3:-both}"; SELS="${4:-default}"; shift $(( $# < 4 ? $# : 4 ))
 case "$SEC" in ''|*[!0-9]*|0) echo "seconds must be a number"; exit 2;; esac
 REV=cpu-cycles; case "$MODE" in fullmiss) MODE=full; REV=branch-misses;; esac   # fullmiss: the full listing with branch-miss samples (where mispredicts are detected)
-case "$MODE" in stat|record|both|full|ablate) ;; *) echo "mode must be stat, record, both, full, fullmiss or ablate"; exit 2;; esac
+case "$MODE" in stat|record|both|full|ablate|tid) ;; *) echo "mode must be stat, record, both, full, fullmiss, ablate or tid"; exit 2;; esac
 case "$CPUS" in auto) ;; *[!0-9,]*|'') echo "cpus must be auto or a list like 0,4"; exit 2;; esac
 case "$SELS" in *[!a-z0-9,]*|'') echo "sels must be a list like default,384,l1"; exit 2;; esac
 ts() { date '+%F %T'; }
@@ -91,6 +96,49 @@ if [ "$MODE" = ablate ]; then
 		done; done
 	done
 	rm -rf "$AS"; exit 0
+fi
+
+if [ "$MODE" = tid ]; then
+	N=$(echo "$CPUS" | tr ',' '\n' | wc -l); want=$(seq 0 $((N - 1)) | tr '\n' ',' | sed 's/,$//')
+	[ "$CPUS" = "$want" ] || { echo "tid mode: cpus must be 0..N-1 (like $want)"; exit 2; }
+	case "$SELS" in default) PASSES=6;; *[!0-9]*) echo "tid mode: sels is the number of passes"; exit 2;; *) PASSES=$SELS;; esac
+	LOG="$HOME/verus-runs/perf-tid-miner.log"
+	"$BIN" -a verus --benchmark -t "$N" --no-color --summary-interval="$SEC" "$@" > "$LOG" 2>&1 < /dev/null &
+	MP=$!; trap '[ -n "$MP" ] && kill "$MP" 2>/dev/null' EXIT
+	sleep 20; kill -0 "$MP" 2>/dev/null || { echo "miner did not start:"; tail -5 "$LOG"; exit 1; }
+	echo "$(ts) tid mode: $N threads on cpus $CPUS, $PASSES passes of $SEC s, worker on cpu0 measured"
+	for pass in $(seq 1 "$PASSES"); do
+		T0=""; best=-1
+		for t in /proc/$MP/task/*; do   # the worker on cpu0: the busiest task whose last CPU is 0
+			set -- $(sed 's/^.*) //' "$t/stat" 2>/dev/null); [ $# -ge 37 ] || continue
+			[ "${37}" = 0 ] && [ "${12}" -gt "$best" ] && { best=${12}; T0=${t##*/}; }
+		done
+		[ -n "$T0" ] || { echo "no miner task on cpu0"; continue; }
+		declare -A R0=(); for t in /proc/$MP/task/*; do R0[${t##*/}]=$(cat "$t/schedstat" 2>/dev/null); done
+		w0=$(date +%s%N)
+		out=$(asroot $((SEC + 60)) "$SP stat -e cpu-cycles,instructions,task-clock -t $T0 --duration $SEC" 2>&1)
+		w1=$(date +%s%N); sleep 2
+		k=$(grep -E '^.{0,30}Summary:' "$LOG" | tail -1 | grep -oE 'T0 [0-9.]+' | awk '{print $2}')
+		cyc=$(echo "$out" | awk '$2 == "cpu-cycles" || $3 == "cpu-cycles" {gsub(/,/, "", $1); print $1; exit}')
+		ins=$(echo "$out" | awk '$2 == "instructions" || $3 == "instructions" {gsub(/,/, "", $1); print $1; exit}')
+		tc=$(echo "$out" | awk '/task-clock/ {gsub(/,/, "", $1); print $1; exit}')
+		echo "--- $(ts) pass $pass: cpu0 worker tid $T0, online cpus $(cat $C/online), cpu0 clock $(( $(cat $C/cpu0/cpufreq/scaling_cur_freq 2>/dev/null || echo 0) / 1000 )) MHz, T0 ${k:-?} kH/s"
+		awk -v c="${cyc:-0}" -v i="${ins:-0}" -v tc="${tc:-0}" -v w="$(( (w1 - w0) / 1000000 ))" -v k="${k:-0}" 'BEGIN {
+			# simpleperf prints task-clock in ms
+			if (tc <= 0 || k <= 0) { print "  counters incomplete"; exit }
+			hs = k * 1000; printf "  task-clock %.0f ms of %d ms wall (%.0f%%) | %.0f MHz effective (cycles per task-clock) | IPC %.2f | %.0f cycles/hash, %.0f instr/hash\n",
+				tc, w, 100 * tc / w, c / tc / 1000, i / c, c / (hs * w / 1000), i / (hs * w / 1000) }'
+		[ -n "$cyc" ] || echo "$out" | tail -8
+		echo -n "  per thread (cpu, run ms, runqueue wait ms):"
+		for t in /proc/$MP/task/*; do id=${t##*/}; set -- ${R0[$id]:-0 0 0}; a=$1; b=$2
+			set -- $(cat "$t/schedstat" 2>/dev/null); r=$(( ($1 - a) / 1000000 )); q=$(( ($2 - b) / 1000000 ))
+			[ $r -gt 100 ] || continue
+			echo -n " [$(sed 's/^.*) //' "$t/stat" | awk '{print $37}') $r $q]"; done; echo
+		unset R0
+	done
+	kill "$MP" 2>/dev/null; wait "$MP" 2>/dev/null; MP=""
+	echo "$(ts) last summaries:"; grep -E 'Summary:' "$LOG" | tail -"$PASSES"
+	exit 0
 fi
 
 TMPD="$HOME/verus-runs/perf"; mkdir -p "$TMPD"

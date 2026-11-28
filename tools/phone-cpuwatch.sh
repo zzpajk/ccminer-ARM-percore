@@ -17,7 +17,8 @@ set -u
 MIN="${1:-120}"; MODE="${2:-widen}"; CAPMHZ=""
 # MODE may carry ",capNNNN": cap the fast cores (all CPUs above the slowest cluster) at NNNN MHz (root)
 CAPTOP=0
-case "$MODE" in *,captop*) CAPMHZ="${MODE##*,captop}"; MODE="${MODE%%,*}"; CAPTOP=1;; *,cap*) CAPMHZ="${MODE##*,cap}"; MODE="${MODE%%,*}";; esac
+case "$MODE" in *,captop*) CAPMHZ="${MODE##*,captop}"; MODE="${MODE%%,*}"; CAPTOP=1;; *,capmid*) CAPMHZ="${MODE##*,capmid}"; MODE="${MODE%%,*}"; CAPTOP=2;; *,cap*) CAPMHZ="${MODE##*,cap}"; MODE="${MODE%%,*}";; esac
+# ",capmidNNNN": cap only the middle cluster(s) (e.g. the S20's A76: at full clock it halves the A55s' throughput)
 # ",captopNNNN": cap only the fastest cluster (highest cpuinfo_max_freq), e.g. the S10's Mongoose M4
 case "$CAPMHZ" in *[!0-9]*) echo "bad cap value $CAPMHZ"; exit 2;; esac
  STS="${3:-300}"; shift $(( $# < 3 ? $# : 3 ))
@@ -29,7 +30,7 @@ for o in "$@"; do
 	case "$o" in
 		VERUS_SELMAP=*)
 			case "${o#*=}" in ''|*[!0-9a-fA-F:=,]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
-		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_SORT=*|VERUS_V23=*)
+		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_X4=*|VERUS_SORT=*|VERUS_V23=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
 		stune) STUNE=1;;   # apply the scheduler settings of github.com/iSonik/S9-Tweak- (root; restored at the end)
 		pool=*) # a real pool session on a local-network stratum, only at the user's explicit request
@@ -121,6 +122,7 @@ if [ -n "$CAPMHZ" ]; then
 	for c in $C/cpu[0-9]*; do
 		mx=$(cat $c/cpufreq/cpuinfo_max_freq 2>/dev/null); [ -n "$mx" ] && [ "$mx" -gt "$lo" ] || continue
 		[ "$CAPTOP" = 1 ] && [ "$mx" -lt "$hi" ] && continue
+		[ "$CAPTOP" = 2 ] && [ "$mx" -ge "$hi" ] && continue   # capmid: neither the slowest nor the fastest cluster
 		# largest available frequency <= the cap
 		f=$(tr ' ' '\n' < $c/cpufreq/scaling_available_frequencies 2>/dev/null | awk -v t=$((CAPMHZ*1000)) '$1 <= t && $1 > b {b = $1} END {print b+0}')
 		[ "$f" -gt 0 ] || f=$((CAPMHZ*1000))
@@ -197,4 +199,5 @@ echo "$(ts) thermal: $(awk -v s="$sum" -v k="$cnt" -v ti="${T_IDLE:-0}" -v ts="$
 	printf "khs=%.1f tidle=%d tavg=%.1f tpeak=%d khs_per_c=%.1f khs_per_c_rise=%s throttled=%d/%d", h, ti, ta, tp, (ta > 0 ? h / ta : 0), (ta > ti ? sprintf("%.1f", h / (ta - ti)) : "n/a"), th, n }')"
 [ -n "$POOL" ] && { echo "$(ts) pool: $(grep -cE 'accepted: ' "$LOG") accepted-lines, last: $(grep -E 'accepted: ' "$LOG" | tail -1)"; grep -iE 'reject|stratum|diff|HASH CHECK' "$LOG" | tail -8; }
 echo "$(ts) miner hashrate lines (first/last):"; grep -E 'Total:|Summary:' "$LOG" | sed -n '1p;$p'
+grep -q 'Summary:.*| kH/s T0' "$LOG" && { echo "$(ts) per-thread kH/s (--summary-interval, last 5):"; grep -oE 'Summary: .*' "$LOG" | tail -5; }
 echo "$(ts) variant per thread:"; grep -oE 'Verus thread [0-9]+.*' "$LOG" | sort -t' ' -k3,3n | uniq | head -40

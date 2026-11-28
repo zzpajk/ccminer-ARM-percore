@@ -332,9 +332,9 @@ static void verus_scan_cpuinfo()
 static inline bool verus_sel_ok(long x)
 {
 #ifndef VERUS_ALL_VARIANTS
-	return x == 384 || x == 419 || x == 483 || x == 7552 || x == 2467;
+	return x == 384 || x == 419 || x == 483 || x == 7552 || x == 2467 || x == 2465 || x == 417;   /* 2465 / 417: 2.3 testing aids */
 #endif
-	return x == 3520 || x == 2467 || x == 3491 || x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931 || x == 1408 || x == 1411 || x == 1443 || x == 2432 || x == 3456 || x == 5504 || x == 7552 || x == 11648 || x == 28032 || x == 44416 || x == 77184 || x == 93568 || x == 109952 || x == 265600 || x == 134528 || x == 396672;
+	return x == 3520 || x == 2467 || x == 2465 || x == 417 || x == 3491 || x == 0 || x == 1 || x == 2 || x == 3 || x == 4 || x == 5 || x == 7 || x == 8 || x == 9 || x == 11 || x == 16 || x == 32 || x == 48 || x == 19 || x == 35 || x == 51 || x == 64 || x == 67 || x == 99 || x == 39 || x == 128 || x == 131 || x == 163 || x == 227 || x == 256 || x == 259 || x == 291 || x == 355 || x == 384 || x == 387 || x == 419 || x == 483 || x == 512 || x == 515 || x == 547 || x == 640 || x == 643 || x == 675 || x == 768 || x == 771 || x == 803 || x == 896 || x == 899 || x == 931 || x == 1408 || x == 1411 || x == 1443 || x == 2432 || x == 3456 || x == 5504 || x == 7552 || x == 11648 || x == 28032 || x == 44416 || x == 77184 || x == 93568 || x == 109952 || x == 265600 || x == 134528 || x == 396672;
 }
 
 #ifdef VERUS_PERCORE
@@ -540,7 +540,7 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 		memset(vh, 0, sizeof(vh));
 
 		constexpr int S0 = SEL & ~VERUS_V23;
-		Verus2hash_xN<NLT, ((NLT <= 2 || (NLT == 3 && (S0 == 3456 || S0 == 265600 || S0 == 419 || S0 == 2467)) || (NLT == 4 && (SEL & VERUS_V23) && (S0 == 419 || S0 == 2467))) ? SEL : 0)>(hp, L, np);   /* 3/4 lanes: only these values are instantiated */
+		Verus2hash_xN<NLT, ((NLT <= 2 || (NLT == 3 && (S0 == 3456 || S0 == 265600 || S0 == 419 || S0 == 2467 || ((SEL & VERUS_V23) && (S0 == 2465 || S0 == 417)))) || (NLT == 4 && (SEL & VERUS_V23) && (S0 == 419 || S0 == 2467))) ? SEL : 0)>(hp, L, np);   /* 3/4 lanes: only these values are instantiated */
 
 		for (int lane = 0; lane < NL; lane++) {
 			if (vh[lane][7] <= Htarg) {
@@ -755,6 +755,9 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 			case 483: verus_scan_lanes<483 | VERUS_V23>(&c); break;
 			case 419: if (verus_x4()) verus_scan_lanes<419 | VERUS_V23, 4>(&c); else if (verus_x3()) verus_scan_lanes<419 | VERUS_V23, 3>(&c); else verus_scan_lanes<419 | VERUS_V23>(&c); break;
 			case 384: verus_scan_lanes<384 | VERUS_V23>(&c); break;
+			/* testing aid: 2467 / 419 without SEL bit 2 (the divide arm only when the selector takes it), always 3 lanes */
+			case 2465: verus_scan_lanes<2465 | VERUS_V23, 3>(&c); break;
+			case 417: verus_scan_lanes<417 | VERUS_V23, 3>(&c); break;
 			default:
 				{ static __thread int logged = 0; if (!logged && sel != 0) { logged = 1; applog(LOG_WARNING, "Verus thread %d: SEL %d has no VerusHash 2.3 form, using SEL 0", thr_id, sel); } }
 				verus_scan_lanes<0 | VERUS_V23>(&c); break;

@@ -89,6 +89,15 @@ void haraka512_keyed(unsigned char *out, const unsigned char *in, const __m128i 
   d.val[1] = vcopyq_laneq_s32(vcopyq_laneq_s32(vcopyq_laneq_s32(vcopyq_laneq_s32(d.val[1], 0, x.val[2], 0), 1, x.val[0], 0), 2, x.val[3], 0), 3, x.val[1], 0); \
   d.val[2] = vcopyq_laneq_s32(vcopyq_laneq_s32(vcopyq_laneq_s32(vcopyq_laneq_s32(d.val[2], 0, x.val[2], 1), 1, x.val[0], 1), 2, x.val[3], 1), 3, x.val[1], 1); \
   d.val[3] = vcopyq_laneq_s32(vcopyq_laneq_s32(vcopyq_laneq_s32(vcopyq_laneq_s32(d.val[3], 0, x.val[0], 2), 1, x.val[2], 2), 2, x.val[1], 2), 3, x.val[3], 2);
+/* The same permutation as a zip network (as VERUS_ZIPMIX does for the single-nonce function): 3 full mixes of
+ * 8 zips instead of 16 lane inserts, and the last mix as 3 zips (an outside review's suggestion, 2026-11-27). */
+#define HKZ1_(a, b) vreinterpretq_s64_s32(vzip1q_s32(vreinterpretq_s32_s64(a), vreinterpretq_s32_s64(b)))
+#define HKZ2_(a, b) vreinterpretq_s64_s32(vzip2q_s32(vreinterpretq_s32_s64(a), vreinterpretq_s32_s64(b)))
+#undef HK_MIX4
+#define HK_MIX4(d, x) { \
+  const __m128i zt0_ = HKZ1_(x.val[0], x.val[1]), zt1_ = HKZ2_(x.val[0], x.val[1]); \
+  const __m128i zt2_ = HKZ1_(x.val[2], x.val[3]), zt3_ = HKZ2_(x.val[2], x.val[3]); \
+  d.val[0] = HKZ2_(zt1_, zt3_); d.val[1] = HKZ1_(zt2_, zt0_); d.val[2] = HKZ2_(zt2_, zt0_); d.val[3] = HKZ1_(zt1_, zt3_); }
 void haraka512_keyed_x2(unsigned char *outA, const unsigned char *inA, const __m128i *rA,
 		unsigned char *outB, const unsigned char *inB, const __m128i *rB) {
   struct int64x2x4_t sA, nA, sB, nB;
@@ -104,8 +113,8 @@ void haraka512_keyed_x2(unsigned char *outA, const unsigned char *inA, const __m
   HK_MIX4(nA, sA)     HK_MIX4(nB, sB)
   HK_AES4(nA, rA, 24) HK_AES4(nB, rB, 24)
   /* MIX4_LAST keeps only state 2: lanes (n2[1], n0[1], n3[1], n1[1]); then 2 AES rounds on it */
-  lA = vcopyq_laneq_s32(vcopyq_laneq_s32(vcopyq_laneq_s32(vcopyq_laneq_s32(sA.val[2], 0, nA.val[2], 1), 1, nA.val[0], 1), 2, nA.val[3], 1), 3, nA.val[1], 1);
-  lB = vcopyq_laneq_s32(vcopyq_laneq_s32(vcopyq_laneq_s32(vcopyq_laneq_s32(sB.val[2], 0, nB.val[2], 1), 1, nB.val[0], 1), 2, nB.val[3], 1), 3, nB.val[1], 1);
+  lA = HKZ2_(HKZ1_(nA.val[2], nA.val[3]), HKZ1_(nA.val[0], nA.val[1]));
+  lB = HKZ2_(HKZ1_(nB.val[2], nB.val[3]), HKZ1_(nB.val[0], nB.val[1]));
   lA = _mm_aesenc_si128(lA, rA[34]); lB = _mm_aesenc_si128(lB, rB[34]);
   lA = _mm_aesenc_si128(lA, rA[38]); lB = _mm_aesenc_si128(lB, rB[38]);
   ((uint32_t*)&outA[0])[7] = ((uint32_t*)&lA)[2] ^ ((uint32_t*)&inA[52])[0];

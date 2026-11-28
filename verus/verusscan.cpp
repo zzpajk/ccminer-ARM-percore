@@ -460,15 +460,26 @@ static inline bool verus_x3()
 	return t == 1;
 }
 
-/* testing aid, VerusHash 2.3 only: VERUS_X4=1 runs four nonces per step on the cores whose 2.3 SEL is
- * 7552, 2467 or 419 (four key copies, ~35 KB: meant for the 64 KB L1D of A75 / A76 / M3-M5). 7552 cores run
- * the 2467 form, since 7552's threaded rounds are two-lane only. Off unless set. */
+/* VerusHash 2.3 only: four nonces per step on the cores whose 2.3 SEL is 7552, 2467 or 419 (four key copies,
+ * ~35 KB of L1D). 7552 cores run the 2467 form, since 7552's threaded rounds are two-lane only. VERUS_X4=1 forces
+ * it on, VERUS_X4=0 off; unset: on for Cortex-A76 (41:d0b) and Mongoose M5 (53:004), the S20's big cores.
+ * 20-min sustained 2.3, 8 threads, 2026-11-28 (with the selector rows): S20 6.08 -> 6.32 MH/s (A76 threads
+ * 1260 -> 1340, M5 1270 -> 1305); S10 (A75 + M4) 5.82 -> 5.71, so not there. Decided once per thread. */
 static inline bool verus_x4()
 {
 	static int env = -2;
-	if (env == -2) { const char *e = getenv("VERUS_X4"); env = (e && e[0] == '1' && !e[1]) ? 1 : 0;
-		if (env) applog(LOG_INFO, "VERUS_X4=1: four nonces per step on the 2.3 SEL 7552 / 2467 / 419 cores"); }
-	return env == 1;
+	if (env == -2) { const char *e = getenv("VERUS_X4"); env = (e && (e[0] == '0' || e[0] == '1') && !e[1]) ? e[0] - '0' : -1;
+		if (env == 1) applog(LOG_INFO, "VERUS_X4=1: four nonces per step on the 2.3 SEL 7552 / 2467 / 419 cores"); }
+	if (env >= 0) return env == 1;
+	static __thread int t = -1;
+	if (t < 0) {
+		t = 0;
+#ifdef VERUS_PERCORE
+		const int cpu = sched_getcpu();
+		if (cpu >= 0 && cpu < 1024 && ((g_impl[cpu] == 0x41 && g_part[cpu] == 0xd0b) || (g_impl[cpu] == 0x53 && g_part[cpu] == 0x004))) t = 1;
+#endif
+	}
+	return t == 1;
 }
 
 static int verus_lanes_for_this_core(int thr_id, int *sel)

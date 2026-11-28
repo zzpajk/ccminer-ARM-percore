@@ -92,10 +92,15 @@
 #  define VERUS_VAR_PRISTINE ""
 #endif
 
-#define VERUS_VARIANT_NAME_RAW "baseline" VERUS_VAR_ZIPMIX VERUS_VAR_X2 VERUS_VAR_PRISTINE
+#ifdef VERUS_V23BR
+#  define VERUS_VAR_V23BR "+v23br"   /* 2.3 step: plain XOR plus a branch for the same-slot case */
+#else
+#  define VERUS_VAR_V23BR ""
+#endif
+#define VERUS_VARIANT_NAME_RAW "baseline" VERUS_VAR_ZIPMIX VERUS_VAR_V23BR VERUS_VAR_X2 VERUS_VAR_PRISTINE
 /* "baseline+zipmix" reads oddly, so strip the "baseline" prefix when any
  * variant flag is set. */
-#if defined(VERUS_ZIPMIX) || defined(VERUS_X2) || defined(VERUS_PRISTINE)
+#if defined(VERUS_ZIPMIX) || defined(VERUS_V23BR) || defined(VERUS_X2) || defined(VERUS_PRISTINE)
 #  define VERUS_VARIANT_NAME (VERUS_VARIANT_NAME_RAW + 9)
 #else
 #  define VERUS_VARIANT_NAME VERUS_VARIANT_NAME_RAW

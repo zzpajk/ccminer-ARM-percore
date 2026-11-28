@@ -32,7 +32,9 @@ for o in "$@"; do
 			case "${o#*=}" in ''|*[!0-9a-fA-F:=,]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
 		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_SORT=*|VERUS_V23=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
-		VERUS_X4=*)   # 0, 1, or 0xMASK (four lanes on those CPUs only)
+		VERUS_PIN=*)   # miner thread i on the i-th listed CPU, e.g. VERUS_PIN=0,1,2,3,4,6,7 with -t 7
+			case "${o#*=}" in ''|*[!0-9,]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
+		VERUS_X4=*|VERUS_X5=*)   # 0, 1, or 0xMASK (four or five lanes on those CPUs only)
 			case "${o#*=}" in 0|1|0x[0-9a-fA-F]|0x[0-9a-fA-F][0-9a-fA-F]) export "$o";; *) echo "bad value in $o"; exit 2;; esac;;
 		stune) STUNE=1;;   # apply the scheduler settings of github.com/iSonik/S9-Tweak- (root; restored at the end)
 		pool=*) # a real pool session on a local-network stratum, only at the user's explicit request
@@ -67,7 +69,8 @@ if op=$(other_miner); then
 	echo "another ccminer is running (pid $op: $(tr '\0' ' ' < /proc/$op/cmdline | cut -c1-80)); stop it first"; exit 1
 fi
 BIN=""
-if [ -n "$WANTBIN" ] && [ -x "$HOME/ccminer/ccminer-$WANTBIN" ]; then BIN="$HOME/ccminer/ccminer-$WANTBIN"   # e.g. bin=verus-zipmix (termux-install --zipmix)
+if [ -n "$WANTBIN" ] && [ -x "$HOME/ccminer-test/ccminer-$WANTBIN" ]; then BIN="$HOME/ccminer-test/ccminer-$WANTBIN"   # termux-install --test-dir
+elif [ -n "$WANTBIN" ] && [ -x "$HOME/ccminer/ccminer-$WANTBIN" ]; then BIN="$HOME/ccminer/ccminer-$WANTBIN"   # e.g. bin=verus-zipmix (termux-install --zipmix)
 elif [ -n "$WANTBIN" ]; then
 	BIN=$(ls -t "$HOME"/verus-runs/work-bench-*/bin/ccminer-"$WANTBIN" 2>/dev/null | head -1)
 	[ -x "${BIN:-}" ] || { echo "no bench build ccminer-$WANTBIN found under ~/verus-runs (run a bench job with -v $WANTBIN)"; exit 1; }
@@ -95,6 +98,9 @@ tload() {
 	echo "$cur" > "$TL_PREV"; echo "$now" > "$TL_PREV.t"
 }
 
+# battery power in mW (|current| x voltage): only the battery's share; reads ~0 while a charger feeds the phone directly
+pwr() { local b=/sys/class/power_supply/battery i v; i=$(cat $b/current_now 2>/dev/null); v=$(cat $b/voltage_now 2>/dev/null)
+	[ -n "$i" ] && [ -n "$v" ] || { echo ""; return; }; awk -v i="$i" -v v="$v" 'BEGIN { if (i < 0) i = -i; if (v > 100000) v /= 1000; if (i > 20000) i /= 1000; printf "%d", i * v / 1000 }'; }   # uA or mA, uV or mV
 freqs() { local o="" c; for c in $C/cpu[0-9]*; do o="$o $(( $(cat $c/cpufreq/scaling_cur_freq 2>/dev/null || echo 0) / 1000 ))"; done; echo "${o# }"; }
 caps() { local o="" c mx sm; for c in $C/cpu[0-9]*; do mx=$(cat $c/cpufreq/cpuinfo_max_freq 2>/dev/null); sm=$(cat $c/cpufreq/scaling_max_freq 2>/dev/null)
 	[ -n "$mx" ] && [ -n "$sm" ] && [ "$sm" -lt "$mx" ] && o="$o ${c##*/}:$((sm/1000))/$((mx/1000))"; done; echo "${o# }"; }
@@ -163,7 +169,7 @@ if [ "$STUNE" = 1 ]; then
 fi
 sleep 5
 echo "$(ts) miner pid $MP, $NCPU threads; sampling every 10 s for $MIN min, status every $STS s"
-t_start=$(date +%s); sum=0; cnt=0; tsum=0; tcnt=0; tpeak=0; thr=0; stn=0
+t_start=$(date +%s); psum=0; pcnt=0; sum=0; cnt=0; tsum=0; tcnt=0; tpeak=0; thr=0; stn=0
 end=$(( $(date +%s) + MIN * 60 )); last=""; changes=0; narrow=0; samples=0; nextst=$(( $(date +%s) + STS ))
 while [ "$(date +%s)" -lt "$end" ] && kill -0 "$MP" 2>/dev/null; do
 	fg=$(cat "$F" 2>/dev/null); al=$(grep -m1 Cpus_allowed_list /proc/$MP/status 2>/dev/null | awk '{print $2}')
@@ -187,8 +193,9 @@ while [ "$(date +%s)" -lt "$end" ] && kill -0 "$MP" 2>/dev/null; do
 		if [ $(( $(date +%s) - t_start )) -ge 300 ]; then
 			stn=$((stn + 1)); { [ -n "$cl" ] || [ -n "$cp" ]; } && thr=$((thr + 1))
 			[ -n "$tm" ] && { tsum=$((tsum + tm)); tcnt=$((tcnt + 1)); [ "$tm" -gt "$tpeak" ] && tpeak=$tm; }
+			pw=$(pwr); [ -n "$pw" ] && { psum=$((psum + pw)); pcnt=$((pcnt + 1)); }
 		fi
-		echo "$(ts) status: ${hr:-no total yet} | MHz $(freqs) | caps ${cp:-none} | $(temps) | max ${tm:-?}C | cooling ${cl:-none} | $cur | threads on $on | cpu time per thread since the last status (cpu:percent) $(tload)"
+		echo "$(ts) status: ${hr:-no total yet} | MHz $(freqs) | caps ${cp:-none} | $(temps) | max ${tm:-?}C | battery $(pwr) mW | cooling ${cl:-none} | $cur | threads on $on | cpu time per thread since the last status (cpu:percent) $(tload)"
 		nextst=$(( $(date +%s) + STS ))
 	fi
 	sleep 10
@@ -200,7 +207,11 @@ echo "$(ts) average hashrate after the first 5 min: $(awk -v s="$sum" -v k="$cnt
 echo "$(ts) thermal: $(awk -v s="$sum" -v k="$cnt" -v ti="${T_IDLE:-0}" -v ts="$tsum" -v tk="$tcnt" -v tp="$tpeak" -v th="$thr" -v n="$stn" 'BEGIN {
 	h = k > 0 ? s / k : 0; ta = tk > 0 ? ts / tk : 0
 	printf "khs=%.1f tidle=%d tavg=%.1f tpeak=%d khs_per_c=%.1f khs_per_c_rise=%s throttled=%d/%d", h, ti, ta, tp, (ta > 0 ? h / ta : 0), (ta > ti ? sprintf("%.1f", h / (ta - ti)) : "n/a"), th, n }')"
+echo "$(ts) power: $(awk -v s="$sum" -v k="$cnt" -v p="$psum" -v n="$pcnt" 'BEGIN { h = k > 0 ? s / k : 0; w = n > 0 ? p / n / 1000 : 0
+	printf "battery_w=%.2f khs_per_w=%s (battery current only: ~0 while a charger feeds the phone directly)", w, (w > 0.3 ? sprintf("%.0f", h / w) : "n/a") }')"
 [ -n "$POOL" ] && { echo "$(ts) pool: $(grep -cE 'accepted: ' "$LOG") accepted-lines, last: $(grep -E 'accepted: ' "$LOG" | tail -1)"; grep -iE 'reject|stratum|diff|HASH CHECK' "$LOG" | tail -8; }
 echo "$(ts) miner hashrate lines (first/last):"; grep -E 'Total:|Summary:' "$LOG" | sed -n '1p;$p'
 grep -q 'Summary:.*| kH/s T0' "$LOG" && { echo "$(ts) per-thread kH/s (--summary-interval, last 5):"; grep -oE 'Summary: .*' "$LOG" | tail -5; }
+grep -q 'Summary:.*| kH/s T0' "$LOG" && echo "$(ts) per-thread mean kH/s, summaries after the first 5: $(grep -oE 'Summary: .*' "$LOG" | awk 'NR > 5 { n++; for (i = 1; i <= NF; i++) if ($i ~ /^T[0-9]+$/) { s[$i] += $(i + 1); if (!($i in o)) { o[$i] = ++m; nm[m] = $i } } }
+	END { if (!n) { print "n/a"; exit } for (j = 1; j <= m; j++) printf "%s %.1f ", nm[j], s[nm[j]] / n; printf "(%d summaries)", n }')"
 echo "$(ts) variant per thread:"; grep -oE 'Verus thread [0-9]+.*' "$LOG" | sort -t' ' -k3,3n | uniq | head -40

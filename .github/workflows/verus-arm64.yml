@@ -136,7 +136,7 @@ jobs:
           ./fullchecktest23 200000 | tee -a difftest.txt
           grep -q 'fullchecktest 2.3.*PASS' difftest.txt
           # the lane code in 2.3 (SEL bit 20) against the single-nonce 2.3 loop: every value with a 2.3 form
-          for v in 2:7552 2:2467 2:419 2:483 2:384 2:0 3:2467 3:419 3:2465 3:417 4:2467 4:419 1:263296 1:396416 1:128; do
+          for v in 2:7552 2:2467 2:419 2:483 2:384 2:0 3:2467 3:419 3:2465 3:417 4:2467 4:419 5:2467 1:263296 1:396416 1:128; do
             n=${v%%:*}; f=${v#*:}
             clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_TEST_V23 -DVERUS_LANES=$n -DVERUS_SEL_FORCE=$f -I. -Iverus \
               tests/verus_x2test.cpp clx2.o hk.o hkp.o -o x2test23_${n}_${f}
@@ -144,7 +144,23 @@ jobs:
           done
           for v in baseline pristine x2percore x2percorep; do echo "banner $v: $(./out/ccminer-$v --version 2>&1 | grep -o 'Verus variant: .*' | head -1)" | tee -a difftest.txt; done
           ! grep -q FAIL difftest.txt
-          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 119 ]
+          [ "$(grep -c 'x2test.*PASS' difftest.txt)" = 120 ]
+          # 2.3 step forms against the reference step, both key stores forced onto one slot in half the steps
+          for b in "" "-DVERUS_V23BR"; do
+            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 $b -I. -Iverus tests/verus_v23steptest.cpp hk.o hkp.o -o v23steptest
+            ./v23steptest 2000000 | tee -a difftest.txt
+          done
+          [ "$(grep -c 'v23steptest.*PASS' difftest.txt)" = 2 ]
+          # the branch form (variant v23br) in the 2.3 lane code, whole hashes
+          clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_V23BR -I. -Iverus -c verus/verus_clhash_portable.cpp -o clx2br.o
+          for v in 2:7552 2:2467 2:419 3:2467 4:2467 1:263296 1:396416; do
+            n=${v%%:*}; f=${v#*:}
+            clang++ -O2 -march=armv8-a+crypto -fno-strict-aliasing -std=gnu++11 -DVERUS_X2 -DVERUS_ALL_VARIANTS -DVERUS_TEST_V23 -DVERUS_V23BR -DVERUS_LANES=$n -DVERUS_SEL_FORCE=$f -I. -Iverus \
+              tests/verus_x2test.cpp clx2br.o hk.o hkp.o -o x2test23br
+            ./x2test23br 200000 | sed "s/x2test 2.3/v23br x2test 2.3 $n-lane SEL $f/" | tee -a difftest.txt
+          done
+          [ "$(grep -c 'v23br x2test.*PASS' difftest.txt)" = 7 ]
+          ! grep -q FAIL difftest.txt
           grep -q 'pristinetest.*PASS' difftest.txt
       - name: One-step build script (build-verus.sh, system clang)
         run: |

@@ -481,10 +481,30 @@ static inline bool verus_x4()
 		if (env == 2) t = (cpu >= 0 && cpu < 64 && ((mask >> cpu) & 1)) ? 1 : 0;
 #ifdef VERUS_PERCORE
 		else
-		if (cpu >= 0 && cpu < 1024 && ((g_impl[cpu] == 0x41 && g_part[cpu] == 0xd0b) || (g_impl[cpu] == 0x53 && g_part[cpu] == 0x004))) t = 1;
+		if (cpu >= 0 && cpu < 1024 && ((g_impl[cpu] == 0x41 && g_part[cpu] == 0xd0b) || (g_impl[cpu] == 0x53 && (g_part[cpu] == 0x004 || g_part[cpu] == 0x002)))) t = 1;   /* A76, M5, M3 */
 #endif
 	}
 	return t == 1;
+}
+
+/* VERUS_X5=0xMASK: five nonces per step (SEL 2467 form) on the CPUs in the mask; a 2.3 test, off by default */
+static inline bool verus_x5()
+{
+	static int env = -2; static unsigned long long mask = 0;
+	if (env == -2) { const char *e = getenv("VERUS_X5"); env = 0;
+		if (e && e[0] == '0' && (e[1] == 'x' || e[1] == 'X') && e[2]) { char *end; mask = strtoull(e + 2, &end, 16); if (!*end && mask) env = 1; }
+		if (env) applog(LOG_INFO, "VERUS_X5=0x%llx: five nonces per step on those CPUs (2.3 SEL 7552 / 2467)", mask); }
+	if (!env) return false;
+	static __thread int t = -1;
+	if (t < 0) { const int cpu = sched_getcpu(); t = (cpu >= 0 && cpu < 64 && ((mask >> cpu) & 1)) ? 1 : 0; }
+	return t == 1;
+}
+
+/* the lane count and SEL the 2.3 dispatch really runs, once per thread */
+static inline void verus_v23_log(int thr_id, int lanes, int sel)
+{
+	static __thread int logged = 0;
+	if (!logged) { logged = 1; applog(LOG_INFO, "Verus thread %d on cpu %d: VerusHash 2.3, %d nonces per step (SEL %d)", thr_id, sched_getcpu(), lanes, sel); }
 }
 
 static int verus_lanes_for_this_core(int thr_id, int *sel)
@@ -556,7 +576,7 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 		}
 
 		constexpr int S0 = SEL & ~VERUS_V23;
-		Verus2hash_xN<NLT, ((NLT <= 2 || (NLT == 3 && (S0 == 3456 || S0 == 265600 || S0 == 419 || S0 == 2467 || ((SEL & VERUS_V23) && (S0 == 2465 || S0 == 417)))) || (NLT == 4 && (SEL & VERUS_V23) && (S0 == 419 || S0 == 2467))) ? SEL : 0)>(hp, L, np);   /* 3/4 lanes: only these values are instantiated */
+		Verus2hash_xN<NLT, ((NLT <= 2 || (NLT == 3 && (S0 == 3456 || S0 == 265600 || S0 == 419 || S0 == 2467 || ((SEL & VERUS_V23) && (S0 == 2465 || S0 == 417)))) || (NLT == 4 && (SEL & VERUS_V23) && (S0 == 419 || S0 == 2467)) || (NLT == 5 && (SEL & VERUS_V23) && S0 == 2467)) ? SEL : 0)>(hp, L, np);   /* 3/4 lanes: only these values are instantiated */
 
 		for (int lane = 0; lane < NL; lane++) {
 			if (vh[lane][7] <= Htarg) {
@@ -765,15 +785,21 @@ extern "C" int scanhash_verus(int thr_id, struct work *work, uint32_t max_nonce,
 		if (v23) {
 			/* VerusHash 2.3: the per-core defaults have a 2.3 form (SEL bit 20); any other VERUS_SEL value runs plain x2 */
 			switch (sel) {
-			case 7552: if (verus_x4()) verus_scan_lanes<2467 | VERUS_V23, 4>(&c);   /* 7552's threaded form is two-lane only */
-				else verus_scan_lanes<7552 | VERUS_V23>(&c); break;
-			case 2467: if (verus_x4()) verus_scan_lanes<2467 | VERUS_V23, 4>(&c); else if (verus_x3()) verus_scan_lanes<2467 | VERUS_V23, 3>(&c); else verus_scan_lanes<2467 | VERUS_V23>(&c); break;
-			case 483: verus_scan_lanes<483 | VERUS_V23>(&c); break;
-			case 419: if (verus_x4()) verus_scan_lanes<419 | VERUS_V23, 4>(&c); else if (verus_x3()) verus_scan_lanes<419 | VERUS_V23, 3>(&c); else verus_scan_lanes<419 | VERUS_V23>(&c); break;
-			case 384: verus_scan_lanes<384 | VERUS_V23>(&c); break;
+			case 7552: case 2467:   /* 7552's threaded form is two-lane only: 3 to 5 lanes use the 2467 form */
+				if (verus_x5()) { verus_v23_log(thr_id, 5, 2467); verus_scan_lanes<2467 | VERUS_V23, 5>(&c); }
+				else if (verus_x4()) { verus_v23_log(thr_id, 4, 2467); verus_scan_lanes<2467 | VERUS_V23, 4>(&c); }
+				else if (sel == 7552) { verus_v23_log(thr_id, 2, 7552); verus_scan_lanes<7552 | VERUS_V23>(&c); }
+				else if (verus_x3()) { verus_v23_log(thr_id, 3, 2467); verus_scan_lanes<2467 | VERUS_V23, 3>(&c); }
+				else { verus_v23_log(thr_id, 2, 2467); verus_scan_lanes<2467 | VERUS_V23>(&c); }
+				break;
+			case 483: verus_v23_log(thr_id, 2, 483); verus_scan_lanes<483 | VERUS_V23>(&c); break;
+			case 419: if (verus_x4()) { verus_v23_log(thr_id, 4, 419); verus_scan_lanes<419 | VERUS_V23, 4>(&c); }
+				else if (verus_x3()) { verus_v23_log(thr_id, 3, 419); verus_scan_lanes<419 | VERUS_V23, 3>(&c); }
+				else { verus_v23_log(thr_id, 2, 419); verus_scan_lanes<419 | VERUS_V23>(&c); } break;
+			case 384: verus_v23_log(thr_id, 2, 384); verus_scan_lanes<384 | VERUS_V23>(&c); break;
 			/* testing aid: 2467 / 419 without SEL bit 2 (the divide arm only when the selector takes it), always 3 lanes */
-			case 2465: verus_scan_lanes<2465 | VERUS_V23, 3>(&c); break;
-			case 417: verus_scan_lanes<417 | VERUS_V23, 3>(&c); break;
+			case 2465: verus_v23_log(thr_id, 3, 2465); verus_scan_lanes<2465 | VERUS_V23, 3>(&c); break;
+			case 417: verus_v23_log(thr_id, 3, 417); verus_scan_lanes<417 | VERUS_V23, 3>(&c); break;
 			default:
 				{ static __thread int logged = 0; if (!logged && sel != 0) { logged = 1; applog(LOG_WARNING, "Verus thread %d: SEL %d has no VerusHash 2.3 form, using SEL 0", thr_id, sel); } }
 				verus_scan_lanes<0 | VERUS_V23>(&c); break;

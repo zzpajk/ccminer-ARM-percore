@@ -32,18 +32,19 @@ static void single(unsigned char *hash, unsigned char *buf, const unsigned char 
 	for (int i = 31; i > -1; i--) { key[fr[i]] = gp[i]; key[fre[i]] = gpx[i]; }
 }
 
+#define XM (VERUS_LANES > 4 ? VERUS_LANES : 4)
 int main(int argc, char **argv)
 {
 	const int N = VERUS_LANES;
 	long iters = argc > 1 ? atol(argv[1]) : 20000, bad = 0;
-	alignas(64) __m128i key0[560], keyS[560], keyL[4][560];
-	alignas(64) __m128i gpL[4][32], gpxL[4][32], gpS[32], gpxS[32];
-	alignas(16) uint16_t frL[4][128], freL[4][32], frS[32], freS[32];
+	alignas(64) __m128i key0[560], keyS[560], keyL[XM][560];
+	alignas(64) __m128i gpL[XM][32], gpxL[XM][32], gpS[32], gpxS[32];
+	alignas(16) uint16_t frL[XM][128], freL[XM][32], frS[32], freS[32];
 	for (long it = 0; it < iters; it++) {
 		if (it % 100 == 0) { fill(key0, sizeof(key0)); }
-		alignas(16) unsigned char half[64], bS[64], bL[4][64];
+		alignas(16) unsigned char half[64], bS[64], bL[XM][64];
 		fill(half, 64);
-		unsigned char nonce[4][15], hS[4][32], hL[4][32];
+		unsigned char nonce[XM][15], hS[XM][32], hL[XM][32];
 		memset(hS, 0, sizeof(hS)); memset(hL, 0, sizeof(hL));
 		memcpy(keyS, key0, sizeof(key0));
 		for (int l = 0; l < N; l++) { fill(nonce[l], 15); memcpy(keyL[l], key0, sizeof(key0)); memcpy(bL[l], half, 64); }
@@ -52,8 +53,8 @@ int main(int argc, char **argv)
 			memcpy(bS, half, 64);
 			single(hS[l], bS, nonce[l], keyS, frS, freS, gpS, gpxS);
 		}
-		struct verus_lane L[4];
-		unsigned char *hp[4]; const unsigned char *np[4];
+		struct verus_lane L[XM];
+		unsigned char *hp[XM]; const unsigned char *np[XM];
 		for (int l = 0; l < N; l++) {
 			L[l] = (struct verus_lane){ keyL[l], frL[l], freL[l], gpL[l], gpxL[l], bL[l], key0 };   /* key0 = pristine copy (SEL bit 128) */
 			hp[l] = hL[l]; np[l] = nonce[l];

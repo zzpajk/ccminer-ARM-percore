@@ -6,8 +6,7 @@
 #   cpus     "auto" (default: the first allowed CPU of every cluster) or a list such as 0,4
 #   mode     stat | record | both (default both) | full (record, then every instruction of each function
 #            holding >= 2% of the samples, with its share: long output)
-#            | tid: ONE miner with a thread on each of cpus 0..N-1 (cpus must be "0,1,..,N-1"; the miner pins thread i
-#            to cpu i), then "sels" passes of the given seconds on the cpu0 worker TID: cycles, instructions and
+#            | tid: ONE miner with a thread on each listed cpu (VERUS_PIN: thread i on the i-th), then "sels" passes of the given seconds on the cpu0 worker TID: cycles, instructions and
 #            task-clock (simpleperf stat -t), its run / runqueue-wait time (schedstat) and its kH/s; plus the online
 #            CPUs and where every miner thread ran. Tells clock loss (cycles per task-clock), lost CPU time
 #            (task-clock per wall second, runqueue wait) and real slowdown (cycles per hash) apart.
@@ -99,21 +98,21 @@ if [ "$MODE" = ablate ]; then
 fi
 
 if [ "$MODE" = tid ]; then
-	N=$(echo "$CPUS" | tr ',' '\n' | wc -l); want=$(seq 0 $((N - 1)) | tr '\n' ',' | sed 's/,$//')
-	[ "$CPUS" = "$want" ] || { echo "tid mode: cpus must be 0..N-1 (like $want)"; exit 2; }
+	N=$(echo "$CPUS" | tr ',' '\n' | wc -l); M0=${CPUS%%,*}; export VERUS_PIN="$CPUS"   # thread i on the i-th listed CPU; the first is measured
 	case "$SELS" in default) PASSES=6;; *[!0-9]*) echo "tid mode: sels is the number of passes"; exit 2;; *) PASSES=$SELS;; esac
 	LOG="$HOME/verus-runs/perf-tid-miner.log"
+	MA=(); for a in "$@"; do case "$a" in VERUS_V23=[01]|VERUS_X4=*|VERUS_X5=*|VERUS_SEL=[0-9]*|VERUS_LANES=[0-9]*) export "$a";; *) MA+=("$a");; esac; done; set -- "${MA[@]}"
 	"$BIN" -a verus --benchmark -t "$N" --no-color --summary-interval="$SEC" "$@" > "$LOG" 2>&1 < /dev/null &
 	MP=$!; trap '[ -n "$MP" ] && kill "$MP" 2>/dev/null' EXIT
 	sleep 20; kill -0 "$MP" 2>/dev/null || { echo "miner did not start:"; tail -5 "$LOG"; exit 1; }
-	echo "$(ts) tid mode: $N threads on cpus $CPUS, $PASSES passes of $SEC s, worker on cpu0 measured"
+	echo "$(ts) tid mode: $N threads on cpus $CPUS, $PASSES passes of $SEC s, worker on cpu$M0 measured"
 	for pass in $(seq 1 "$PASSES"); do
 		T0=""; best=-1
 		for t in /proc/$MP/task/*; do   # the worker on cpu0: the busiest task whose last CPU is 0
 			set -- $(sed 's/^.*) //' "$t/stat" 2>/dev/null); [ $# -ge 37 ] || continue
-			[ "${37}" = 0 ] && [ "${12}" -gt "$best" ] && { best=${12}; T0=${t##*/}; }
+			[ "${37}" = "$M0" ] && [ "${12}" -gt "$best" ] && { best=${12}; T0=${t##*/}; }
 		done
-		[ -n "$T0" ] || { echo "no miner task on cpu0"; continue; }
+		[ -n "$T0" ] || { echo "no miner task on cpu$M0"; continue; }
 		declare -A R0=(); for t in /proc/$MP/task/*; do R0[${t##*/}]=$(cat "$t/schedstat" 2>/dev/null); done
 		w0=$(date +%s%N)
 		out=$(asroot $((SEC + 60)) "$SP stat -e cpu-cycles,instructions,task-clock -t $T0 --duration $SEC" 2>&1)
@@ -122,7 +121,7 @@ if [ "$MODE" = tid ]; then
 		cyc=$(echo "$out" | awk '$2 == "cpu-cycles" || $3 == "cpu-cycles" {gsub(/,/, "", $1); print $1; exit}')
 		ins=$(echo "$out" | awk '$2 == "instructions" || $3 == "instructions" {gsub(/,/, "", $1); print $1; exit}')
 		tc=$(echo "$out" | awk '/task-clock/ {gsub(/,/, "", $1); print $1; exit}')
-		echo "--- $(ts) pass $pass: cpu0 worker tid $T0, online cpus $(cat $C/online), cpu0 clock $(( $(cat $C/cpu0/cpufreq/scaling_cur_freq 2>/dev/null || echo 0) / 1000 )) MHz, T0 ${k:-?} kH/s"
+		echo "--- $(ts) pass $pass: cpu0 worker tid $T0, online cpus $(cat $C/online), cpu$M0 clock $(( $(cat $C/cpu$M0/cpufreq/scaling_cur_freq 2>/dev/null || echo 0) / 1000 )) MHz, T0 ${k:-?} kH/s"
 		awk -v c="${cyc:-0}" -v i="${ins:-0}" -v tc="${tc:-0}" -v w="$(( (w1 - w0) / 1000000 ))" -v k="${k:-0}" 'BEGIN {
 			# simpleperf prints task-clock in ms
 			if (tc <= 0 || k <= 0) { print "  counters incomplete"; exit }

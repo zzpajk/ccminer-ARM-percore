@@ -1924,7 +1924,13 @@ static void *miner_thread(void *userdata)
 	}
 
 	/* Cpu thread affinity */
-	if (num_cpus > 1) {
+	int pin_cpu = -1;   /* VERUS_PIN=0,1,4,...: thread i on the i-th listed CPU (per-cluster tests) */
+	{ const char *p = getenv("VERUS_PIN"); for (int k = 0; p && *p; k++) { char *e; long c = strtol(p, &e, 10);
+		if (e == p || (*e && *e != ',')) break; if (k == thr_id) { if (c >= 0 && c < num_cpus) pin_cpu = (int)c; break; } p = *e ? e + 1 : e; } }
+	if (pin_cpu >= 0) {
+		applog(LOG_INFO, "VERUS_PIN: thread %d on cpu %d", thr_id, pin_cpu);
+		affine_to_cpu_mask(thr_id, 1UL << pin_cpu);
+	} else if (num_cpus > 1) {
 		if (opt_affinity == -1L && opt_n_threads > 1) {
 			if (opt_debug)
 				applog(LOG_DEBUG, "Binding thread %d to cpu %d (mask %x)", thr_id,

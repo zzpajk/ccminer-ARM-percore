@@ -211,4 +211,6 @@ echo "$(ts) power: $(awk -v s="$sum" -v k="$cnt" -v p="$psum" -v n="$pcnt" 'BEGI
 [ -n "$POOL" ] && { echo "$(ts) pool: $(grep -cE 'accepted: ' "$LOG") accepted-lines, last: $(grep -E 'accepted: ' "$LOG" | tail -1)"; grep -iE 'reject|stratum|diff|HASH CHECK' "$LOG" | tail -8; }
 echo "$(ts) miner hashrate lines (first/last):"; grep -E 'Total:|Summary:' "$LOG" | sed -n '1p;$p'
 grep -q 'Summary:.*| kH/s T0' "$LOG" && { echo "$(ts) per-thread kH/s (--summary-interval, last 5):"; grep -oE 'Summary: .*' "$LOG" | tail -5; }
+grep -q 'Summary:.*| kH/s T0' "$LOG" && echo "$(ts) per-thread mean kH/s, summaries after the first 5: $(grep -oE 'Summary: .*' "$LOG" | awk 'NR > 5 { n++; for (i = 1; i <= NF; i++) if ($i ~ /^T[0-9]+$/) { s[$i] += $(i + 1); if (!($i in o)) { o[$i] = ++m; nm[m] = $i } } }
+	END { if (!n) { print "n/a"; exit } for (j = 1; j <= m; j++) printf "%s %.1f ", nm[j], s[nm[j]] / n; printf "(%d summaries)", n }')"
 echo "$(ts) variant per thread:"; grep -oE 'Verus thread [0-9]+.*' "$LOG" | sort -t' ' -k3,3n | uniq | head -40

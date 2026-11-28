@@ -23,7 +23,8 @@ BRANCH=main; DIR="$HOME/ccminer"; UPGRADE=1; BUILD=1
 while [ $# -gt 0 ]; do case "$1" in
 	--no-upgrade) UPGRADE=0; shift;;
 	--no-build) BUILD=0; shift;;
-	--all-variants) ALLV="--all-variants"; shift;;   # test variants too (needs ~2.5 GB RAM: not on 4 GB phones)
+	--all-variants) ALLV="--all-variants"; shift;;
+	--zipmix) ZIPB="--zipmix"; shift;;   # also build ~/ccminer/ccminer-verus-zipmix (single-nonce Haraka as a zip network)   # test variants too (needs ~2.5 GB RAM: not on 4 GB phones)
 	-b) BRANCH="$2"; shift 2;;
 	*) echo "unknown option: $1"; exit 2;;
 esac; done
@@ -102,6 +103,7 @@ chmod +x "$DIR/start-ccminer.sh" "$DIR/stop-ccminer.sh"
 [ "$BUILD" = 1 ] || { echo "Source is in $DIR (not built: --no-build)."; exit 0; }
 echo "[5/5] Building (several minutes)..."
 [ -x "$DIR/ccminer-verus" ] && cp -f "$DIR/ccminer-verus" "$DIR/ccminer-verus.old"
+if [ -n "${ZIPB:-}" ]; then bash "$DIR/build-verus.sh" --zipmix || echo "zipmix side build failed"; fi
 if bash "$DIR/build-verus.sh" ${ALLV:-}; then
 	echo
 	echo "Binary: $DIR/ccminer-verus  (built from $(git -C "$DIR" rev-parse --short HEAD))"

@@ -30,8 +30,10 @@ for o in "$@"; do
 	case "$o" in
 		VERUS_SELMAP=*)
 			case "${o#*=}" in ''|*[!0-9a-fA-F:=,]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
-		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_X4=*|VERUS_SORT=*|VERUS_V23=*)
+		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_SORT=*|VERUS_V23=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
+		VERUS_X4=*)   # 0, 1, or 0xMASK (four lanes on those CPUs only)
+			case "${o#*=}" in 0|1|0x[0-9a-fA-F]|0x[0-9a-fA-F][0-9a-fA-F]) export "$o";; *) echo "bad value in $o"; exit 2;; esac;;
 		stune) STUNE=1;;   # apply the scheduler settings of github.com/iSonik/S9-Tweak- (root; restored at the end)
 		pool=*) # a real pool session on a local-network stratum, only at the user's explicit request
 			# only a stratum on the local network (private IPv4 address): test phones never mine on a public pool
@@ -65,7 +67,8 @@ if op=$(other_miner); then
 	echo "another ccminer is running (pid $op: $(tr '\0' ' ' < /proc/$op/cmdline | cut -c1-80)); stop it first"; exit 1
 fi
 BIN=""
-if [ -n "$WANTBIN" ]; then
+if [ -n "$WANTBIN" ] && [ -x "$HOME/ccminer/ccminer-$WANTBIN" ]; then BIN="$HOME/ccminer/ccminer-$WANTBIN"   # e.g. bin=verus-zipmix (termux-install --zipmix)
+elif [ -n "$WANTBIN" ]; then
 	BIN=$(ls -t "$HOME"/verus-runs/work-bench-*/bin/ccminer-"$WANTBIN" 2>/dev/null | head -1)
 	[ -x "${BIN:-}" ] || { echo "no bench build ccminer-$WANTBIN found under ~/verus-runs (run a bench job with -v $WANTBIN)"; exit 1; }
 fi

@@ -468,14 +468,19 @@ static inline bool verus_x3()
 static inline bool verus_x4()
 {
 	static int env = -2;
+	static unsigned long long mask = 0;   /* VERUS_X4=0x..: four lanes only on these CPUs (per-cluster tests) */
 	if (env == -2) { const char *e = getenv("VERUS_X4"); env = (e && (e[0] == '0' || e[0] == '1') && !e[1]) ? e[0] - '0' : -1;
-		if (env == 1) applog(LOG_INFO, "VERUS_X4=1: four nonces per step on the 2.3 SEL 7552 / 2467 / 419 cores"); }
-	if (env >= 0) return env == 1;
+		if (e && e[0] == '0' && (e[1] == 'x' || e[1] == 'X') && e[2]) { char *end; mask = strtoull(e + 2, &end, 16); if (!*end) env = 2; }
+		if (env == 1) applog(LOG_INFO, "VERUS_X4=1: four nonces per step on the 2.3 SEL 7552 / 2467 / 419 cores");
+		if (env == 2) applog(LOG_INFO, "VERUS_X4=0x%llx: four nonces per step on those CPUs only (2.3 SEL 7552 / 2467 / 419)", mask); }
+	if (env == 0 || env == 1) return env == 1;
 	static __thread int t = -1;
 	if (t < 0) {
 		t = 0;
-#ifdef VERUS_PERCORE
 		const int cpu = sched_getcpu();
+		if (env == 2) t = (cpu >= 0 && cpu < 64 && ((mask >> cpu) & 1)) ? 1 : 0;
+#ifdef VERUS_PERCORE
+		else
 		if (cpu >= 0 && cpu < 1024 && ((g_impl[cpu] == 0x41 && g_part[cpu] == 0xd0b) || (g_impl[cpu] == 0x53 && g_part[cpu] == 0x004))) t = 1;
 #endif
 	}
@@ -542,13 +547,13 @@ static __attribute__((noinline)) void verus_scan_lanes(struct verus_scan_ctx *c)
 	unsigned char *hp[NLT]; const unsigned char *np[NLT];
 	for (int l = 0; l < NL; l++) { hp[l] = (unsigned char *)vh[l]; np[l] = nonceL[l]; }
 	throughput = NL;
+	memset(vh, 0, sizeof(vh));   /* once: the fast finalizers write only word 7, so words 0..6 stay zero */
 	do {
 		*c->hashes_done = nonce_buf + throughput;
 		for (int l = 0; l < NL; l++) {
 			memcpy(nonceL[l], nonceSpace, 15);
 			((uint32_t *)(&nonceL[l][11]))[0] = nonce_buf + l;
 		}
-		memset(vh, 0, sizeof(vh));
 
 		constexpr int S0 = SEL & ~VERUS_V23;
 		Verus2hash_xN<NLT, ((NLT <= 2 || (NLT == 3 && (S0 == 3456 || S0 == 265600 || S0 == 419 || S0 == 2467 || ((SEL & VERUS_V23) && (S0 == 2465 || S0 == 417)))) || (NLT == 4 && (SEL & VERUS_V23) && (S0 == 419 || S0 == 2467))) ? SEL : 0)>(hp, L, np);   /* 3/4 lanes: only these values are instantiated */

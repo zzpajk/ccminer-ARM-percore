@@ -23,9 +23,10 @@ BRANCH=main; DIR="$HOME/ccminer"; UPGRADE=1; BUILD=1
 while [ $# -gt 0 ]; do case "$1" in
 	--no-upgrade) UPGRADE=0; shift;;
 	--no-build) BUILD=0; shift;;
-	--all-variants) ALLV="--all-variants"; shift;;
-	--zipmix) ZIPB="${ZIPB:-} --zipmix"; shift;;
-	--v23br) ZIPB="${ZIPB:-} --v23br"; shift;;   # also build ~/ccminer/ccminer-verus-v23br (2.3 step with a same-slot branch)   # also build ~/ccminer/ccminer-verus-zipmix (single-nonce Haraka as a zip network)   # test variants too (needs ~2.5 GB RAM: not on 4 GB phones)
+	--all-variants) ALLV="--all-variants"; shift;;   # test variants too (needs ~2.5 GB RAM: not on 4 GB phones)
+	--zipmix) ZIPB="${ZIPB:-} --zipmix"; shift;;   # also build ccminer-verus-zipmix (single-nonce Haraka as a zip network)
+	--v23br) ZIPB="${ZIPB:-} --v23br"; shift;;     # also build ccminer-verus-v23br (2.3 step with a same-slot branch)
+	--test-dir) DIR="$HOME/ccminer-test"; shift;;  # build in ~/ccminer-test and leave ~/ccminer (a miner set up by hand) alone
 	-b) BRANCH="$2"; shift 2;;
 	*) echo "unknown option: $1"; exit 2;;
 esac; done

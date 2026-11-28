@@ -69,7 +69,8 @@ if op=$(other_miner); then
 	echo "another ccminer is running (pid $op: $(tr '\0' ' ' < /proc/$op/cmdline | cut -c1-80)); stop it first"; exit 1
 fi
 BIN=""
-if [ -n "$WANTBIN" ] && [ -x "$HOME/ccminer/ccminer-$WANTBIN" ]; then BIN="$HOME/ccminer/ccminer-$WANTBIN"   # e.g. bin=verus-zipmix (termux-install --zipmix)
+if [ -n "$WANTBIN" ] && [ -x "$HOME/ccminer-test/ccminer-$WANTBIN" ]; then BIN="$HOME/ccminer-test/ccminer-$WANTBIN"   # termux-install --test-dir
+elif [ -n "$WANTBIN" ] && [ -x "$HOME/ccminer/ccminer-$WANTBIN" ]; then BIN="$HOME/ccminer/ccminer-$WANTBIN"   # e.g. bin=verus-zipmix (termux-install --zipmix)
 elif [ -n "$WANTBIN" ]; then
 	BIN=$(ls -t "$HOME"/verus-runs/work-bench-*/bin/ccminer-"$WANTBIN" 2>/dev/null | head -1)
 	[ -x "${BIN:-}" ] || { echo "no bench build ccminer-$WANTBIN found under ~/verus-runs (run a bench job with -v $WANTBIN)"; exit 1; }

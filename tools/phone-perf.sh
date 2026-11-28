@@ -103,7 +103,7 @@ if [ "$MODE" = tid ]; then
 	[ "$CPUS" = "$want" ] || { echo "tid mode: cpus must be 0..N-1 (like $want)"; exit 2; }
 	case "$SELS" in default) PASSES=6;; *[!0-9]*) echo "tid mode: sels is the number of passes"; exit 2;; *) PASSES=$SELS;; esac
 	LOG="$HOME/verus-runs/perf-tid-miner.log"
-	MA=(); for a in "$@"; do case "$a" in VERUS_V23=[01]|VERUS_X4=*|VERUS_SEL=[0-9]*|VERUS_LANES=[0-9]*) export "$a";; *) MA+=("$a");; esac; done; set -- "${MA[@]}"
+	MA=(); for a in "$@"; do case "$a" in VERUS_V23=[01]|VERUS_X4=*|VERUS_X5=*|VERUS_SEL=[0-9]*|VERUS_LANES=[0-9]*) export "$a";; *) MA+=("$a");; esac; done; set -- "${MA[@]}"
 	"$BIN" -a verus --benchmark -t "$N" --no-color --summary-interval="$SEC" "$@" > "$LOG" 2>&1 < /dev/null &
 	MP=$!; trap '[ -n "$MP" ] && kill "$MP" 2>/dev/null' EXIT
 	sleep 20; kill -0 "$MP" 2>/dev/null || { echo "miner did not start:"; tail -5 "$LOG"; exit 1; }

@@ -75,6 +75,10 @@ static inline void Verus2hash_xN(unsigned char *const *hash, struct verus_lane *
 	} else if (N == 4 && (SEL & 256)) {   /* four lanes: two pairs */
 		haraka512_keyed_x2(hash[0], L[0].buf, L[0].key + (im[0] & 511), hash[1], L[1].buf, L[1].key + (im[1] & 511));
 		haraka512_keyed_x2(hash[2], L[2].buf, L[2].key + (im[2] & 511), hash[N - 1], L[N - 1].buf, L[N - 1].key + (im[N - 1] & 511));
+	} else if (N == 5 && (SEL & 256)) {   /* five lanes: two pairs and a single */
+		haraka512_keyed_x2(hash[0], L[0].buf, L[0].key + (im[0] & 511), hash[1], L[1].buf, L[1].key + (im[1] & 511));
+		haraka512_keyed_x2(hash[2], L[2].buf, L[2].key + (im[2] & 511), hash[3], L[3].buf, L[3].key + (im[3] & 511));
+		haraka512_keyed(hash[N - 1], L[N - 1].buf, L[N - 1].key + (im[N - 1] & 511));
 	} else
 		for (int l = 0; l < N; l++) haraka512_keyed(hash[l], L[l].buf, L[l].key + (im[l] & 511));
 #else

@@ -32,7 +32,7 @@ for o in "$@"; do
 			case "${o#*=}" in ''|*[!0-9a-fA-F:=,]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
 		VERUS_SEL=*|VERUS_SEL1=*|VERUS_LANES=*|VERUS_PRE1=*|VERUS_X3=*|VERUS_SORT=*|VERUS_V23=*)
 			case "${o#*=}" in ''|*[!0-9]*) echo "bad value in $o"; exit 2;; esac; export "$o";;
-		VERUS_X4=*)   # 0, 1, or 0xMASK (four lanes on those CPUs only)
+		VERUS_X4=*|VERUS_X5=*)   # 0, 1, or 0xMASK (four or five lanes on those CPUs only)
 			case "${o#*=}" in 0|1|0x[0-9a-fA-F]|0x[0-9a-fA-F][0-9a-fA-F]) export "$o";; *) echo "bad value in $o"; exit 2;; esac;;
 		stune) STUNE=1;;   # apply the scheduler settings of github.com/iSonik/S9-Tweak- (root; restored at the end)
 		pool=*) # a real pool session on a local-network stratum, only at the user's explicit request

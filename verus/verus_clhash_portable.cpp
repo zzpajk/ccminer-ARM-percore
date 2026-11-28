@@ -415,8 +415,14 @@ FORCE_INLINE __m128i verus_v23_step_row(__m128i acc, const uint64_t i, const __m
 	const __m128i pqx = _mm_load_si128_emu(row + 2);
 	const __m128i qpxp = _mm_load_si128_emu(row + 3);
 	const __m128i rcst = _mm_set_epi64x_emu((uint64_t)-1, i + 1);
+#ifdef VERUS_V23BR
+	/* variant "v23br": the XOR directly, and a (rarely taken) branch when both stores hit one slot */
+	__m128i addp = _mm_xor_si128_emu(pqx, _mm_xor_si128_emu(vpr, vpx));
+	if (__builtin_expect(same, 0)) { addp = pqx; __asm__ volatile("" : "+w"(addp)); }
+#else
 	const __m128i keep = vreinterpretq_s64_u64(vdupq_n_u64(same ? 0 : ~0ULL));
 	const __m128i addp = _mm_xor_si128_emu(pqx, vandq_s64(keep, _mm_xor_si128_emu(vpr, vpx)));
+#endif
 	const __m128i clp = _mm_clmulepi64_si128_emu(addp, addp, 0x10);
 	const __m128i t = _mm_xor_si128_emu(clp, rcst);
 	const __m128i addq = _mm_xor_si128_emu(qpxp, t);

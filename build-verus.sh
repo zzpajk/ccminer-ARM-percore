@@ -27,8 +27,8 @@
 
 set -u
 cd "$(dirname "$0")" || exit 1
-SRC=$(pwd); WORK="${VERUS_WORK:-$HOME/ccminer-verus-build}"; JOBS=""; WANT=17; SYSCLANG=0; ALLV=""
-while [ $# -gt 0 ]; do case "$1" in -j) JOBS="$2"; shift 2;; --system-clang) SYSCLANG=1; shift;; --all-variants) ALLV=" -DVERUS_ALL_VARIANTS"; shift;; *) echo "unknown option: $1"; exit 2;; esac; done
+SRC=$(pwd); WORK="${VERUS_WORK:-$HOME/ccminer-verus-build}"; JOBS=""; WANT=17; SYSCLANG=0; ALLV=""; ZIP=""; OUT=ccminer-verus
+while [ $# -gt 0 ]; do case "$1" in -j) JOBS="$2"; shift 2;; --system-clang) SYSCLANG=1; shift;; --all-variants) ALLV=" -DVERUS_ALL_VARIANTS"; shift;; --zipmix) ZIP=" -DVERUS_ZIPMIX"; OUT=ccminer-verus-zipmix; shift;; *) echo "unknown option: $1"; exit 2;; esac; done
 have() { command -v "$1" >/dev/null 2>&1; }
 SUDO=""; [ "$(id -u)" -ne 0 ] && have sudo && SUDO="sudo"
 
@@ -112,12 +112,12 @@ B="$WORK/build"; rm -rf "$B"; mkdir -p "$B"
   { if [ -n "$CCD" ]; then sed -i "s#CXX=clang++ CC=clang#CXX=$CCD/clang++ CC=$CCD/clang#" configure.sh; fi; true; } && \
   { if [ -n "$RMF" ]; then echo "$RMF" | tr '|' '\n' | while IFS= read -r f; do sed -i "s# $f##g" configure.sh; done; fi; true; } && \
   { if [ -n "$JT" ]; then sed -i "s#^extracflags=\"#extracflags=\"-mllvm $JT #" configure.sh; sed -i "s#LDFLAGS=\"-v -flto#LDFLAGS=\"-v -flto -Wl,-mllvm,$JT#" configure.sh; fi; true; } && \
-  sh ./configure.sh && make -j"$JOBS" CPPFLAGS="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE$ALLV" ) >"$WORK/build.log" 2>&1
-if [ ! -x "$B/ccminer" ] || ! grep -q 'baseline+x2percore+pristine' "$B/ccminer"; then
+  sh ./configure.sh && make -j"$JOBS" CPPFLAGS="-DVERUS_X2 -DVERUS_AUTO -DVERUS_PERCORE -DVERUS_PRISTINE$ALLV$ZIP" ) >"$WORK/build.log" 2>&1
+if [ ! -x "$B/ccminer" ] || ! grep -qE '(baseline|zipmix)\+x2percore\+pristine' "$B/ccminer"; then
   echo "BUILD FAILED. Last lines of $WORK/build.log:"; tail -25 "$WORK/build.log"; exit 1
 fi
-cp "$B/ccminer" "$SRC/ccminer-verus"
-echo "[5/5] Done: $SRC/ccminer-verus"
+cp "$B/ccminer" "$SRC/$OUT"   # --zipmix: a side binary, ccminer-verus is left as it was
+echo "[5/5] Done: $SRC/$OUT"
 echo "Quick check (about 20 s):  ./ccminer-verus -a verus --benchmark -t $(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 8) --time-limit 20"
 echo "Mine with your own pool and wallet, e.g.:"
 echo "  ./ccminer-verus -a verus -o stratum+tcp://YOUR_POOL:PORT -u YOUR_WALLET.WORKER -p x -t $(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 8)"
